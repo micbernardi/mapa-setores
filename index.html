@@ -104,6 +104,16 @@ body.mapaFull #mapaStats{display:flex}
 #mapaStats .chip b{display:inline;font-size:11.5px;margin-left:5px;font-weight:700;color:var(--txt)}
 #mapaView iframe{width:100%;height:100%;border:1px solid var(--border);border-radius:var(--radius);background:var(--panel)}
 .teamband{margin-bottom:26px}
+.stbl tr[draggable="true"]{cursor:grab}
+.stbl tr.dragging{opacity:.45}
+.teamband.dropok,.extband.dropok{outline:2px dashed var(--alt);outline-offset:3px;border-radius:var(--radius)}
+.extband{margin-bottom:30px;border:1px solid var(--border2);border-radius:var(--radius);overflow:hidden;background:var(--panel)}
+.exthead{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;background:var(--panel2);padding:11px 16px;border-bottom:1px solid var(--border)}
+.exthead .tname{font-family:'Archivo';font-weight:800;font-size:14px;letter-spacing:.06em;color:var(--mut)}
+.extrow{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--border);font-size:12.5px;cursor:grab;background:var(--panel)}
+.extrow:last-child{border-bottom:0}
+.extrow.dragging{opacity:.45}
+.extrow:hover{background:var(--panel2)}
 .pendband{margin-bottom:30px;border:1px solid var(--alt);border-radius:var(--radius);overflow:hidden;background:var(--panel)}
 .pendhead{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;background:var(--alt-dim);padding:11px 16px;border-bottom:1px solid var(--alt)}
 .pendhead .tname{font-family:'Archivo';font-weight:800;font-size:14px;letter-spacing:.06em;color:var(--alt)}
@@ -557,6 +567,9 @@ const S={
   marcaOff:new Set(),     // mIds excluidas da simulacao
   linhaOv:new Map(),      // sIdx -> linha simulada (setor convertido)
   teamOv:new Map(),       // sIdx -> nome da equipe simulada
+  reativOv:new Map(),     // sIdx (encerrado no estudo) -> equipe onde foi reativado
+  desligOv:new Set(),     // sIdx (ativos) encerrados manualmente na simulacao
+  teamDel:new Set(),      // nomes originais de distritais do estudo excluidas na simulacao
   period:'mes',
   filesEstudo:null,filesBase:null,
 };
@@ -602,7 +615,7 @@ $('fileBase').onchange=e=>{
 function checkReady(){$('btnProcess').disabled=!S.filesBase;}
 try{
   const saved=JSON.parse(localStorage.getItem(LS_KEY)||'null');
-  if(saved&&((saved.mb&&saved.mb.length)||(saved.mo&&saved.mo.length)||(saved.mx&&saved.mx.length)||(saved.sl&&saved.sl.length)||(saved.tv&&saved.tv.length))){
+  if(saved&&((saved.mb&&saved.mb.length)||(saved.mo&&saved.mo.length)||(saved.mx&&saved.mx.length)||(saved.sl&&saved.sl.length)||(saved.tv&&saved.tv.length)||(saved.rv&&saved.rv.length)||(saved.dg&&saved.dg.length)||(saved.tn&&saved.tn.length)||(saved.ta&&saved.ta.length)||(saved.td&&saved.td.length))){
     $('restoreNote').style.display='block';
     $('restoreNote').textContent='Existe uma simulação salva neste navegador ('+(saved.mb?saved.mb.length:0)+' bricks movidos, '+(saved.mo?saved.mo.length:0)+' marcas trocadas, '+(saved.mx?saved.mx.length:0)+' marcas excluídas). Ela será reaplicada após o processamento.';
   }
@@ -845,26 +858,48 @@ function buildTeams(){
     }
   }
   const rest=[];
-  S.setores.forEach((s,i)=>{s.extinto=false;if(!used.has(i))rest.push(i);});
+  S.setores.forEach((s,i)=>{s.extinto=false;s.extintoBase=false;if(!used.has(i))rest.push(i);});
   rest.sort((a,b)=>S.setores[a].num-S.setores[b].num);
   S.extintos=[];
   if(rest.length){
     if(S.study){
       // setores desligados na reestruturacao: os bricks deles entram como "a realocar"
-      for(const i of rest){S.setores[i].extinto=true;S.extintos.push(i);}
+      for(const i of rest){S.setores[i].extinto=true;S.setores[i].extintoBase=true;S.extintos.push(i);}
     }else{
       S.teams.push({name:'TODOS OS SETORES',sIdxs:rest});
     }
   }
   // guardar agrupamento original e aplicar movimentos de equipe simulados
-  S.teamsBase=S.teams.map(t=>({name:t.name,sIdxs:t.sIdxs.slice()}));
+  S.teamsBase=S.teams.map(t=>({name:t.name,orig:t.name,added:false,sIdxs:t.sIdxs.slice()}));
+  S.teamsOrig=S.teamsBase.map(t=>({name:t.name,orig:t.orig,sIdxs:t.sIdxs.slice()}));
+  S.teamDel.clear();
   for(const t of S.teams)for(const i of t.sIdxs)S.setores[i].teamOrig=t.name;
   applyTeamOv();
 }
+function applyStatusOv(){
+  // recomputa flags de encerramento a partir do estado base + overrides da simulacao
+  for(const s of S.setores)s.extinto=!!s.extintoBase;
+  for(const i of[...S.reativOv.keys()]){
+    if(S.setores[i]&&S.setores[i].extintoBase)S.setores[i].extinto=false;
+    else S.reativOv.delete(i);
+  }
+  for(const i of[...S.desligOv]){
+    if(S.setores[i]&&!S.setores[i].extintoBase)S.setores[i].extinto=true;
+    else S.desligOv.delete(i);
+  }
+  S.extintos=[];
+  S.setores.forEach((s,i)=>{if(s.extinto)S.extintos.push(i);});
+}
 function applyTeamOv(){
-  S.teams=S.teamsBase.map(t=>({name:t.name,sIdxs:t.sIdxs.slice()}));
+  applyStatusOv();
+  S.teams=S.teamsBase.map(t=>({name:t.name,orig:t.orig,added:t.added,sIdxs:t.sIdxs.filter(i=>!S.setores[i].extinto)}));
   const byName=new Map(S.teams.map(t=>[t.name,t]));
+  for(const[i,name]of S.reativOv){
+    const dest=byName.get(name)||S.teams[0];
+    if(dest&&!dest.sIdxs.includes(i))dest.sIdxs.push(i);
+  }
   for(const[i,name]of S.teamOv){
+    if(S.setores[i].extinto)continue;
     const dest=byName.get(name);
     if(!dest||S.setores[i].teamOrig===name){S.teamOv.delete(i);continue;}
     for(const t of S.teams){
@@ -873,15 +908,218 @@ function applyTeamOv(){
     }
     dest.sIdxs.push(i);
   }
+  // rede de seguranca: setor ativo sem equipe (ex.: equipe excluida) vai para a equipe de origem ou a primeira
+  if(S.teams.length){
+    const inTeam=new Set();
+    for(const t of S.teams)for(const i of t.sIdxs)inTeam.add(i);
+    for(let i=0;i<S.setores.length;i++){
+      if(S.setores[i].extinto||inTeam.has(i))continue;
+      if(S.setores[i].teamOrig===undefined)continue;
+      const dest=byName.get(S.setores[i].teamOrig)||S.teams[0];
+      if(dest)dest.sIdxs.push(i);
+    }
+  }
 }
 function moveTeam(i,name){
   if(!name)return;
-  if(S.setores[i].teamOrig===name)S.teamOv.delete(i);
-  else S.teamOv.set(i,name);
+  const s=S.setores[i];
+  const eraEncerrado=s.extinto;
+  if(s.extintoBase){
+    S.reativOv.set(i,name);
+  }else{
+    S.desligOv.delete(i);
+    if(s.teamOrig===name)S.teamOv.delete(i);
+    else S.teamOv.set(i,name);
+  }
   applyTeamOv();
   renderAll();
   if(modalSector>=0)renderSectorModal();
-  toast(S.setores[i].num+' agora na equipe '+name);
+  toast(s.num+(eraEncerrado?' reativado na equipe ':' agora na equipe ')+name);
+}
+function desligarSetor(i){
+  const s=S.setores[i];
+  if(s.extinto)return;
+  if(s.extintoBase)S.reativOv.delete(i);
+  else{S.desligOv.add(i);S.teamOv.delete(i);}
+  if(modalSector===i){modalSector=-1;$('sectorModalBg').classList.remove('open');}
+  applyTeamOv();
+  renderAll();
+  toast(s.num+' encerrado na simulação: os bricks dele foram para "a realocar"');
+}
+function undoStatus(i){
+  const s=S.setores[i];
+  if(s.extintoBase)S.reativOv.delete(i);
+  else S.desligOv.delete(i);
+  applyTeamOv();
+  renderAll();
+}
+/* ---------- criacao/edicao/exclusao de distritais (equipes) ---------- */
+function teamNameExists(name){return S.teamsBase.some(t=>t.name===name);}
+function normTeamName(v){return String(v||'').replace(/['"\\<>]/g,'').replace(/\s+/g,' ').trim().toUpperCase();}
+function applyRename(tb,newName){
+  const oldName=tb.name;
+  if(newName===oldName)return;
+  tb.name=newName;
+  for(const[i,v]of S.teamOv)if(v===oldName)S.teamOv.set(i,newName);
+  for(const[i,v]of S.reativOv)if(v===oldName)S.reativOv.set(i,newName);
+  for(const s of S.setores)if(s.teamOrig===oldName)s.teamOrig=newName;
+  applyTeamOv();
+  renderAll();
+  saveLS();
+  if(modalSector>=0&&$('sectorModalBg').classList.contains('open'))renderSectorModal();
+}
+function renameTeamPrompt(ti){
+  const tb=S.teamsBase[ti];
+  if(!tb)return;
+  const nv=prompt('Novo nome da distrital:',tb.name);
+  if(nv===null)return;
+  const name=normTeamName(nv);
+  if(!name){toast('Nome inválido');return;}
+  if(name===tb.name)return;
+  if(teamNameExists(name)){toast('Já existe uma distrital com esse nome');return;}
+  applyRename(tb,name);
+  toast('Distrital renomeada para '+name);
+}
+function renameTeamBack(ti){
+  const tb=S.teamsBase[ti];
+  if(!tb||tb.added||!tb.orig||tb.name===tb.orig)return;
+  if(teamNameExists(tb.orig)){toast('Já existe uma distrital com o nome original');return;}
+  applyRename(tb,tb.orig);
+  toast('Nome original restaurado: '+tb.orig);
+}
+function addTeamPrompt(){
+  const nv=prompt('Nome da nova distrital (ex.: GD 09 NOME):','');
+  if(nv===null)return;
+  const name=normTeamName(nv);
+  if(!name){toast('Nome inválido');return;}
+  if(teamNameExists(name)){toast('Já existe uma distrital com esse nome');return;}
+  S.teamsBase.push({name,orig:null,added:true,sIdxs:[]});
+  applyTeamOv();
+  renderAll();
+  saveLS();
+  toast('Distrital '+name+' criada: arraste setores para ela');
+}
+function deleteTeam(ti){
+  const tb=S.teamsBase[ti];
+  if(!tb)return;
+  if(S.teamsBase.length<=1){toast('Não é possível excluir a última distrital');return;}
+  const name=tb.name;
+  const cur=S.teams.find(t=>t.name===name);
+  const nAct=cur?cur.sIdxs.length:0;
+  if(nAct){
+    if(!confirm('A distrital '+name+' tem '+nAct+' setor(es) ativos.\n\nSetores movidos para cá voltam para a distrital de origem; setores originais dela serão encerrados na simulação (vão para o bloco de setores encerrados e podem ser reativados em outra distrital).\n\nExcluir mesmo assim?'))return;
+  }else{
+    if(!confirm('Excluir a distrital '+name+'?'))return;
+  }
+  if(cur)for(const i of cur.sIdxs.slice()){
+    const s=S.setores[i];
+    if(S.reativOv.get(i)===name){S.reativOv.delete(i);continue;}          // volta para encerrados
+    if(S.teamOv.get(i)===name){S.teamOv.delete(i);continue;}              // volta para a distrital de origem
+    if(s.extintoBase)S.reativOv.delete(i);
+    else{S.desligOv.add(i);S.teamOv.delete(i);}                           // membro original: encerrado na simulacao
+  }
+  // setores originais desta distrital ja movidos para outra permanecem no destino via teamOv
+  for(const[i,v]of[...S.reativOv])if(v===name)S.reativOv.delete(i);
+  if(!tb.added&&tb.orig)S.teamDel.add(tb.orig);
+  S.teamsBase.splice(ti,1);
+  if(modalSector>=0)  {modalSector=-1;$('sectorModalBg').classList.remove('open');}
+  applyTeamOv();
+  renderAll();
+  saveLS();
+  toast('Distrital '+name+' excluída');
+}
+function restoreTeam(orig){
+  if(!S.teamDel.has(orig))return;
+  const t0=(S.teamsOrig||[]).find(t=>t.orig===orig);
+  if(!t0)return;
+  if(teamNameExists(t0.name)){toast('Já existe uma distrital com esse nome');return;}
+  S.teamDel.delete(orig);
+  const sIdxs=t0.sIdxs.slice();
+  S.teamsBase.push({name:t0.name,orig:orig,added:false,sIdxs});
+  for(const i of sIdxs){
+    if(S.setores[i].teamOrig!==undefined)S.setores[i].teamOrig=t0.name;
+    S.desligOv.delete(i);
+  }
+  applyTeamOv();
+  renderAll();
+  saveLS();
+  toast('Distrital '+t0.name+' restaurada com os setores originais');
+}
+function restoreTeamAt(di){
+  const o=[...S.teamDel][di];
+  if(o!==undefined)restoreTeam(o);
+}
+function teamEditsCount(){
+  let n=S.teamDel.size;
+  for(const t of S.teamsBase){
+    if(t.added)n++;
+    else if(t.orig&&t.name!==t.orig)n++;
+  }
+  return n;
+}
+/* ---------- drag & drop de setores ---------- */
+let dragSIdx=-1;
+function dragSetor(e,i){
+  dragSIdx=i;
+  e.dataTransfer.effectAllowed='move';
+  try{e.dataTransfer.setData('text/plain',String(i));}catch(_){}
+  e.currentTarget.classList.add('dragging');
+}
+function dragEndSetor(e){
+  dragSIdx=-1;
+  stopDragScroll();
+  if(e&&e.currentTarget)e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.dropok').forEach(el=>el.classList.remove('dropok'));
+}
+/* auto-scroll da pagina enquanto arrasta perto da borda superior/inferior */
+let dragScrollY=-1,dragScrollRaf=0;
+function dragAutoScroll(){
+  if(dragSIdx<0){dragScrollRaf=0;return;}
+  const h=window.innerHeight,edge=140,vmax=30;
+  let dy=0;
+  if(dragScrollY>=0){
+    if(dragScrollY<edge)dy=-vmax*(1-dragScrollY/edge);
+    else if(dragScrollY>h-edge)dy=vmax*(1-(h-dragScrollY)/edge);
+  }
+  if(dy)window.scrollBy(0,dy);
+  dragScrollRaf=requestAnimationFrame(dragAutoScroll);
+}
+function stopDragScroll(){
+  if(dragScrollRaf)cancelAnimationFrame(dragScrollRaf);
+  dragScrollRaf=0;dragScrollY=-1;
+}
+document.addEventListener('dragover',e=>{
+  if(dragSIdx<0)return;
+  dragScrollY=e.clientY;
+  if(!dragScrollRaf)dragScrollRaf=requestAnimationFrame(dragAutoScroll);
+});
+document.addEventListener('drop',stopDragScroll);
+document.addEventListener('dragend',stopDragScroll);
+function dragOverZone(e,el){
+  if(dragSIdx<0)return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect='move';
+  el.classList.add('dropok');
+}
+function dragLeaveZone(e,el){
+  if(!el.contains(e.relatedTarget))el.classList.remove('dropok');
+}
+function dropTeam(e,el){
+  e.preventDefault();
+  el.classList.remove('dropok');
+  const i=dragSIdx;dragSIdx=-1;
+  if(i<0)return;
+  const name=el.dataset.team;
+  const cur=S.teams.find(t=>t.sIdxs.includes(i));
+  if(cur&&cur.name===name)return; // ja esta nessa equipe
+  moveTeam(i,name);
+}
+function dropDesligar(e,el){
+  e.preventDefault();
+  el.classList.remove('dropok');
+  const i=dragSIdx;dragSIdx=-1;
+  if(i<0||S.setores[i].extinto)return;
+  desligarSetor(i);
 }
 // bricks cujo setor atual e um setor desligado (por linha)
 function pendingBricks(){
@@ -992,7 +1230,7 @@ function renderSummary(){
     rp+=cache.bs.ref[b*2];ri+=cache.bs.ref[b*2+1];
   }
   const tot=tp+ti,rtot=rp+ri;
-  const nChg=S.brickOv.size+S.marcaOv.size+S.marcaOff.size+S.linhaOv.size+S.teamOv.size;
+  const nChg=S.brickOv.size+S.marcaOv.size+S.marcaOff.size+S.linhaOv.size+S.teamOv.size+S.reativOv.size+S.desligOv.size+teamEditsCount();
   const nPend=cache.pend[0].length+cache.pend[1].length;
   let pendVal=0;
   for(let L=0;L<2;L++)for(const r of cache.pend[L])pendVal+=cache.bs.cur[r.b*2+L];
@@ -1160,16 +1398,51 @@ function goPending(){
   const el=$('pendBlock');
   if(el)el.scrollIntoView({behavior:'smooth',block:'start'});
 }
+function renderEncerrados(){
+  // valores e contagem de bricks pendentes por setor encerrado
+  const pv=new Map(),pc=new Map();
+  for(let L=0;L<2;L++)for(const r of cache.pend[L]){
+    if(r.orig>=0&&S.setores[r.orig]&&S.setores[r.orig].extinto){
+      pv.set(r.orig,(pv.get(r.orig)||0)+cache.bs.cur[r.b*2+L]);
+      pc.set(r.orig,(pc.get(r.orig)||0)+1);
+    }
+  }
+  let rows='';
+  const ord=(S.extintos||[]).slice().sort((a,b)=>S.setores[a].num-S.setores[b].num);
+  for(const i of ord){
+    const s=S.setores[i];
+    const L=efLinha(i);
+    rows+=`<div class="extrow" draggable="true" ondragstart="dragSetor(event,${i})" ondragend="dragEndSetor(event)" title="Arraste para uma equipe para reativar este setor na simulação">
+      <span class="num" style="color:var(--mut);font-weight:600">${s.num}</span>
+      <span style="font-weight:600">${esc(s.nomeEstudo||s.nome)}</span>
+      <span class="badge ${L===0?'bP':'bI'}">${LNAME[L]}</span>
+      ${s.extintoBase?'':'<span class="badge bAlt">encerrado na simulação</span>'}
+      <span style="margin-left:auto;color:var(--mut);font-size:12px">${pc.get(i)||0} bricks a realocar</span>
+      <span class="num" style="font-family:'Archivo';font-weight:700">${fmtBRL(pv.get(i)||0)}</span>
+    </div>`;
+  }
+  return `<div class="extband" ondragover="dragOverZone(event,this)" ondragleave="dragLeaveZone(event,this)" ondrop="dropDesligar(event,this)">
+    <div class="exthead"><span class="tname">SETORES ENCERRADOS</span><span style="color:var(--mut);font-size:11.5px">arraste um setor daqui para uma equipe para reativá-lo, ou solte um setor ativo aqui para encerrá-lo na simulação</span></div>
+    ${rows||'<div style="color:var(--mut2);font-size:12.5px;padding:10px 16px">Nenhum setor encerrado. Solte um setor de qualquer equipe aqui para encerrá-lo.</div>'}
+  </div>`;
+}
 function renderTeams(){
   const st=cache.st,pd=cache.bs.pd,stY=cache.stY;
-  let html=renderPending(pd);
-  for(const team of S.teams){
+  let html=renderPending(pd)+renderEncerrados();
+  html+='<div style="display:flex;align-items:center;gap:12px;margin:0 0 12px">'
+    +(S.teams.length>1?'<p style="color:var(--mut2);font-size:11.5px;margin:0;flex:1">Arraste um setor pelo nome para movê-lo de distrital, ou solte-o no bloco de setores encerrados para encerrá-lo na simulação. Use renomear/excluir no cabeçalho de cada distrital.</p>':'<span style="flex:1"></span>')
+    +'<button class="btn primary" onclick="addTeamPrompt()">+ Nova distrital</button></div>';
+  for(const[ti,team]of S.teams.entries()){
     let tc=0,tr=0;
     for(const i of team.sIdxs){tc+=st[i].cur;tr+=st[i].ref;}
     let ty=0,tyr=0;
     if(stY)for(const i of team.sIdxs){ty+=stY[i].cur;tyr+=stY[i].ref;}
-    html+=`<div class="teamband"><div class="teamhead">
+    html+=`<div class="teamband" data-team="${esc(team.name)}" ondragover="dragOverZone(event,this)" ondragleave="dragLeaveZone(event,this)" ondrop="dropTeam(event,this)"><div class="teamhead">
       <span class="tname">${esc(team.name)}</span>
+      ${team.added?'<span class="badge bAlt" title="Distrital criada na simulação">nova</span>':''}
+      ${!team.added&&team.orig&&team.name!==team.orig?`<span class="badge bAlt" title="Renomeada na simulação">era ${esc(team.orig)}</span>`:''}
+      <button class="linkbtn" title="Renomear distrital" onclick="renameTeamPrompt(${ti})">renomear</button>
+      <button class="linkbtn warn" title="Excluir distrital" onclick="deleteTeam(${ti})">excluir</button>
       <span style="color:var(--mut2);font-size:11.5px">${team.sIdxs.length} setores</span>
       ${stY?`<span style="color:var(--mut);font-size:12px">YTD <b class="num" style="color:var(--txt)">${fmtBRL(ty)}</b> ${evoHtml(ty,tyr)}</span>`:''}
       <span class="ttot num">${fmtBRL(tc)}</span><span class="tev">${evoHtml(tc,tr,pd.refLbl)}</span>
@@ -1181,10 +1454,11 @@ function renderTeams(){
       const L=efLinha(i);
       const conv=S.linhaOv.has(i);
       const nConf=conv?sectorConflicts(i).length:0;
-      html+=`<tr class="${L===0?'lP':'lI'}" onclick="openSector(${i})">
+      html+=`<tr class="${L===0?'lP':'lI'}" draggable="true" ondragstart="dragSetor(event,${i})" ondragend="dragEndSetor(event)" onclick="openSector(${i})" title="Arraste para outra equipe ou para o bloco de setores encerrados">
         <td class="snum num" title="Linha ${LNAME[L]}"><i></i>${s.num}</td>
         <td class="snome">${esc(s.nomeEstudo||s.nome)}
           ${conv?`<span class="badge bAlt">convertido para ${LNAME[L]}</span>`:''}
+          ${S.reativOv.has(i)?'<span class="badge bAlt" title="Setor encerrado no estudo, reativado na simulação">reativado</span>':''}
           ${S.teamOv.has(i)?`<span class="badge bAlt" title="Movido de ${esc(S.setores[i].teamOrig||'')}">de ${esc(S.setores[i].teamOrig||'')}</span>`:''}
           ${nConf?`<span class="badge bZero">${nConf} conflito${nConf>1?'s':''}</span>`:''}
           ${t.recv||t.lost?`<span class="badge bAlt">${t.recv?'+'+t.recv:''}${t.recv&&t.lost?' ':''}${t.lost?'-'+t.lost:''}</span>`:''}
@@ -1533,6 +1807,7 @@ function renderSectorModal(){
   mr+=`<div class="mrrow"><span class="mrlb">Linha</span>${conv
     ?`<button class="linkbtn" onclick="revertConversion(${modalSector})">Desfazer conversão (voltar para ${LNAME[s.linha]})</button>`
     :`<button class="linkbtn" onclick="convertSector(${modalSector})">Converter para ${LNAME[1-L]}</button>`}</div>`;
+  mr+=`<div class="mrrow"><span class="mrlb">Status</span><button class="linkbtn warn" onclick="desligarSetor(${modalSector})">Encerrar setor na simulação</button></div>`;
   $('smMetaR').innerHTML=mr;
 
   const lost=sectorLostBricks(modalSector);
@@ -1892,6 +2167,22 @@ function openChanges(){
       <span style="flex:1"><b>${esc(S.marcas[m].name)}</b><br><span style="color:var(--mut);font-size:11.5px">${LNAME[S.marcas[m].linha]} para ${LNAME[L]}</span></span>
       <button class="linkbtn" onclick="setMarcaLinha(${m},${S.marcas[m].linha});openChanges()">desfazer</button></li>`;
   }
+  for(const[ti,t]of S.teamsBase.entries()){
+    if(t.added){
+      html+=`<li><span class="badge bAlt">DISTRITAL</span>
+      <span style="flex:1"><b>${esc(t.name)}</b><br><span style="color:var(--mut);font-size:11.5px">criada na simulação</span></span>
+      <button class="linkbtn warn" onclick="deleteTeam(${ti});openChanges()">excluir</button></li>`;
+    }else if(t.orig&&t.name!==t.orig){
+      html+=`<li><span class="badge bAlt">DISTRITAL</span>
+      <span style="flex:1"><b>${esc(t.name)}</b><br><span style="color:var(--mut);font-size:11.5px">renomeada (era ${esc(t.orig)})</span></span>
+      <button class="linkbtn" onclick="renameTeamBack(${ti});openChanges()">desfazer</button></li>`;
+    }
+  }
+  [...S.teamDel].forEach((o,di)=>{
+    html+=`<li><span class="badge bZero">DISTRITAL</span>
+    <span style="flex:1"><b>${esc(o)}</b><br><span style="color:var(--mut);font-size:11.5px">excluída da simulação</span></span>
+    <button class="linkbtn" onclick="restoreTeamAt(${di});openChanges()">restaurar</button></li>`;
+  });
   for(const[i,name]of S.teamOv){
     const sx=S.setores[i];
     html+=`<li><span class="badge bAlt">EQUIPE</span>
@@ -1903,6 +2194,18 @@ function openChanges(){
     html+=`<li><span class="badge bAlt">SETOR</span>
       <span style="flex:1"><b>${sx.num} - ${esc(sx.nomeEstudo||sx.nome)}</b><br><span style="color:var(--mut);font-size:11.5px">convertido de ${LNAME[sx.linha]} para ${LNAME[L]}</span></span>
       <button class="linkbtn" onclick="revertConversion(${i});openChanges()">desfazer</button></li>`;
+  }
+  for(const[i,name]of S.reativOv){
+    const sx=S.setores[i];
+    html+=`<li><span class="badge bAlt">SETOR</span>
+      <span style="flex:1"><b>${sx.num} - ${esc(sx.nomeEstudo||sx.nome)}</b><br><span style="color:var(--mut);font-size:11.5px">setor encerrado no estudo, reativado na equipe ${esc(name)}</span></span>
+      <button class="linkbtn" onclick="undoStatus(${i});openChanges()">desfazer</button></li>`;
+  }
+  for(const i of S.desligOv){
+    const sx=S.setores[i];
+    html+=`<li><span class="badge bZero">SETOR</span>
+      <span style="flex:1"><b>${sx.num} - ${esc(sx.nomeEstudo||sx.nome)}</b><br><span style="color:var(--mut);font-size:11.5px">encerrado na simulação (era da equipe ${esc(sx.teamOrig||'')})</span></span>
+      <button class="linkbtn" onclick="undoStatus(${i});openChanges()">desfazer</button></li>`;
   }
   for(const m of S.marcaOff){
     html+=`<li><span class="badge bZero">MARCA</span>
@@ -1938,9 +2241,16 @@ document.querySelectorAll('#tabs button').forEach(b=>{
   };
 });
 $('btnReset').onclick=()=>{
-  if(!S.brickOv.size&&!S.marcaOv.size&&!S.marcaOff.size&&!S.linhaOv.size&&!S.teamOv.size){toast('Nenhuma alteração para resetar');return;}
+  if(!S.brickOv.size&&!S.marcaOv.size&&!S.marcaOff.size&&!S.linhaOv.size&&!S.teamOv.size&&!S.reativOv.size&&!S.desligOv.size&&!teamEditsCount()){toast('Nenhuma alteração para resetar');return;}
   if(!confirm('Descartar todas as alterações da simulação?'))return;
-  S.brickOv.clear();S.marcaOv.clear();S.marcaOff.clear();S.linhaOv.clear();S.teamOv.clear();applyTeamOv();
+  S.brickOv.clear();S.marcaOv.clear();S.marcaOff.clear();S.linhaOv.clear();S.teamOv.clear();S.reativOv.clear();S.desligOv.clear();
+  // restaurar estrutura original das distritais (nomes, criadas, excluidas)
+  if(S.teamsOrig){
+    S.teamsBase=S.teamsOrig.map(t=>({name:t.name,orig:t.orig,added:false,sIdxs:t.sIdxs.slice()}));
+    S.teamDel.clear();
+    for(const t of S.teamsBase)for(const i of t.sIdxs)if(S.setores[i])S.setores[i].teamOrig=t.name;
+  }
+  applyTeamOv();
   applyDefaultOff();
   localStorage.removeItem(LS_KEY);
   renderAll();
@@ -2000,7 +2310,17 @@ function saveLS(){
     for(const[i,L]of S.linhaOv)sl.push([S.setores[i].num,LKEY[L]]);
     const tv=[];
     for(const[i,name]of S.teamOv)tv.push([S.setores[i].num,name]);
-    localStorage.setItem(LS_KEY,JSON.stringify({mb,mo,mx,sl,tv}));
+    const rv=[];
+    for(const[i,name]of S.reativOv)rv.push([S.setores[i].num,name]);
+    const dg=[];
+    for(const i of S.desligOv)dg.push(S.setores[i].num);
+    const tn=[],ta=[];
+    for(const t of S.teamsBase){
+      if(t.added)ta.push(t.name);
+      else if(t.orig&&t.name!==t.orig)tn.push([t.orig,t.name]);
+    }
+    const td=[...S.teamDel];
+    localStorage.setItem(LS_KEY,JSON.stringify({mb,mo,mx,sl,tv,rv,dg,tn,ta,td}));
   }catch(e){}
 }
 function applySaved(){
@@ -2011,6 +2331,28 @@ function applySaved(){
   const marcaByName=new Map();S.marcas.forEach((m,i)=>marcaByName.set(m.name,i));
   const setorByNum=new Map();S.setores.forEach((s,i)=>setorByNum.set(s.num,i));
   let n=0;
+  // estrutura de distritais: renomeacoes, criacoes e exclusoes salvas
+  for(const[o,nn]of(saved.tn||[])){
+    const tb=S.teamsBase.find(t=>!t.added&&t.orig===o);
+    if(!tb||tb.name===nn||teamNameExists(nn))continue;
+    const oldName=tb.name;
+    tb.name=nn;
+    for(const s of S.setores)if(s.teamOrig===oldName)s.teamOrig=nn;
+    n++;
+  }
+  for(const nn of(saved.ta||[])){
+    if(!nn||teamNameExists(nn))continue;
+    S.teamsBase.push({name:nn,orig:null,added:true,sIdxs:[]});
+    n++;
+  }
+  for(const o of(saved.td||[])){
+    const bi=S.teamsBase.findIndex(t=>!t.added&&t.orig===o);
+    if(bi<0)continue;
+    S.teamDel.add(o);
+    S.teamsBase.splice(bi,1);
+    n++;
+  }
+  const teamStruct=n;
   for(const[num,lk]of(saved.sl||[])){
     const i=setorByNum.get(num);
     if(i===undefined)continue;
@@ -2022,7 +2364,17 @@ function applySaved(){
     if(i===undefined)continue;
     if(S.setores[i].teamOrig!==name){S.teamOv.set(i,name);n++;}
   }
-  if(S.teamOv.size)applyTeamOv();
+  for(const[num,name]of(saved.rv||[])){
+    const i=setorByNum.get(num);
+    if(i===undefined||!S.setores[i].extintoBase)continue;
+    S.reativOv.set(i,name);n++;
+  }
+  for(const num of(saved.dg||[])){
+    const i=setorByNum.get(num);
+    if(i===undefined||S.setores[i].extintoBase)continue;
+    S.desligOv.add(i);S.teamOv.delete(i);n++;
+  }
+  if(S.teamOv.size||S.reativOv.size||S.desligOv.size||teamStruct)applyTeamOv();
   for(const[bn,lk,destNum]of(saved.mb||[])){
     const b=brickByName.get(bn),dest=setorByNum.get(destNum);
     const L=lk==='P'?0:1;
