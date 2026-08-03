@@ -191,6 +191,14 @@ tr.moff td .badge{opacity:1}
 .mhead .meta{color:var(--mut);font-size:12px;margin-top:3px;line-height:1.45}
 .mhead .mclose{margin-left:0;background:transparent;border:0;color:var(--mut);font-size:22px;line-height:1;padding:0 4px;flex:none}
 .mhead .mclose:hover{color:var(--txt)}
+.tmField{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+.tmField label{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2);font-weight:600}
+.tmField input{background:var(--bg);border:1px solid var(--border2);border-radius:8px;padding:9px 12px;font-size:14px;font-weight:600;color:var(--txt);font-family:inherit;text-transform:uppercase}
+.tmField input:focus{outline:none;border-color:var(--alt)}
+.tmPreview{background:var(--bg);border:1px dashed var(--border2);border-radius:8px;padding:10px 12px;margin-bottom:14px}
+.tmPreview .lb{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2);font-weight:600;display:block;margin-bottom:3px}
+.tmPreview .val{font-size:15px;font-weight:800}
+.tmFoot{display:flex;gap:10px;justify-content:flex-end;padding-top:4px}
 .mtabs{display:flex;gap:2px;padding:0 22px;border-bottom:1px solid var(--border);flex:none}
 .mtabs button{background:transparent;border:0;color:var(--mut);padding:8px 14px;font-size:12.5px;font-weight:600;border-bottom:2px solid transparent;margin-bottom:-1px}
 .mtabs button.on{color:var(--txt);border-bottom-color:var(--txt)}
@@ -334,6 +342,21 @@ tr.moff td .badge{opacity:1}
       <button class="mclose" id="cmClose">&times;</button>
     </div>
     <div class="mbody"><ul id="chgList"></ul></div>
+  </div>
+</div>
+
+<div class="modalBg" id="teamModalBg">
+  <div class="modal" style="max-width:460px">
+    <div class="mhead">
+      <div><h2 id="tmTitle">Editar equipe</h2><div class="meta">O nome final é formado pelo gerente e pelo nome da equipe. A equipe soma os setores que estiverem dentro dela.</div></div>
+      <button class="mclose" id="tmClose">&times;</button>
+    </div>
+    <div class="mbody" style="padding-top:16px">
+      <div class="tmField"><label for="tmGerente">Gerente</label><input id="tmGerente" type="text" placeholder="ex.: MICHEL" autocomplete="off"></div>
+      <div class="tmField"><label for="tmEquipe">Nome da equipe</label><input id="tmEquipe" type="text" placeholder="ex.: GD 01 SERRA" autocomplete="off"></div>
+      <div class="tmPreview"><span class="lb">Nome final da equipe</span><span class="val" id="tmPreview">&nbsp;</span></div>
+      <div class="tmFoot"><button class="btn" id="tmCancel">Cancelar</button><button class="btn primary" id="tmSave">Salvar</button></div>
+    </div>
   </div>
 </div>
 
@@ -968,18 +991,61 @@ function applyRename(tb,newName){
   saveLS();
   if(modalSector>=0&&$('sectorModalBg').classList.contains('open'))renderSectorModal();
 }
-function renameTeamPrompt(ti){
-  const tb=S.teamsBase[ti];
-  if(!tb)return;
-  const nv=prompt('Novo nome da distrital:',tb.name);
-  if(nv===null)return;
-  const name=normTeamName(nv);
-  if(!name){toast('Nome inválido');return;}
-  if(name===tb.name)return;
-  if(teamNameExists(name)){toast('Já existe uma distrital com esse nome');return;}
-  applyRename(tb,name);
-  toast('Distrital renomeada para '+name);
+/* modal gerente + equipe: nome final = "GERENTE - EQUIPE" */
+let teamModalTi=-2; // -2 fechado, -1 nova distrital, >=0 renomear
+function composeTeamName(g,e){
+  g=normTeamName(g);e=normTeamName(e);
+  return [g,e].filter(Boolean).join(' - ');
 }
+function splitTeamName(name){
+  const p=String(name||'').split(' - ');
+  if(p.length>=2)return{gerente:p[0].trim(),equipe:p.slice(1).join(' - ').trim()};
+  return{gerente:'',equipe:String(name||'').trim()};
+}
+function tmUpdatePreview(){
+  const nm=composeTeamName($('tmGerente').value,$('tmEquipe').value);
+  $('tmPreview').textContent=nm||'\u00a0';
+}
+function openTeamModal(ti){
+  teamModalTi=ti;
+  if(ti>=0){
+    const tb=S.teamsBase[ti];if(!tb){teamModalTi=-2;return;}
+    const sp=splitTeamName(tb.name);
+    $('tmTitle').textContent='Editar equipe';
+    $('tmGerente').value=sp.gerente;
+    $('tmEquipe').value=sp.equipe;
+  }else{
+    $('tmTitle').textContent='Nova equipe';
+    $('tmGerente').value='';
+    $('tmEquipe').value='';
+  }
+  tmUpdatePreview();
+  $('teamModalBg').classList.add('open');
+  setTimeout(()=>$('tmGerente').focus(),0);
+}
+function closeTeamModal(){teamModalTi=-2;$('teamModalBg').classList.remove('open');}
+function saveTeamModal(){
+  const name=composeTeamName($('tmGerente').value,$('tmEquipe').value);
+  if(!name){toast('Informe o gerente ou o nome da equipe');return;}
+  if(teamModalTi>=0){
+    const tb=S.teamsBase[teamModalTi];
+    if(!tb){closeTeamModal();return;}
+    if(name===tb.name){closeTeamModal();return;}
+    if(teamNameExists(name)){toast('Já existe uma equipe com esse nome');return;}
+    applyRename(tb,name);
+    closeTeamModal();
+    toast('Equipe renomeada para '+name);
+  }else if(teamModalTi===-1){
+    if(teamNameExists(name)){toast('Já existe uma equipe com esse nome');return;}
+    S.teamsBase.push({name,orig:null,added:true,sIdxs:[]});
+    applyTeamOv();
+    renderAll();
+    saveLS();
+    closeTeamModal();
+    toast('Equipe '+name+' criada: arraste setores para ela');
+  }
+}
+function renameTeamPrompt(ti){openTeamModal(ti);}
 function renameTeamBack(ti){
   const tb=S.teamsBase[ti];
   if(!tb||tb.added||!tb.orig||tb.name===tb.orig)return;
@@ -987,18 +1053,7 @@ function renameTeamBack(ti){
   applyRename(tb,tb.orig);
   toast('Nome original restaurado: '+tb.orig);
 }
-function addTeamPrompt(){
-  const nv=prompt('Nome da nova distrital (ex.: GD 09 NOME):','');
-  if(nv===null)return;
-  const name=normTeamName(nv);
-  if(!name){toast('Nome inválido');return;}
-  if(teamNameExists(name)){toast('Já existe uma distrital com esse nome');return;}
-  S.teamsBase.push({name,orig:null,added:true,sIdxs:[]});
-  applyTeamOv();
-  renderAll();
-  saveLS();
-  toast('Distrital '+name+' criada: arraste setores para ela');
-}
+function addTeamPrompt(){openTeamModal(-1);}
 function deleteTeam(ti){
   const tb=S.teamsBase[ti];
   if(!tb)return;
@@ -1441,7 +1496,7 @@ function renderTeams(){
       <span class="tname">${esc(team.name)}</span>
       ${team.added?'<span class="badge bAlt" title="Distrital criada na simulação">nova</span>':''}
       ${!team.added&&team.orig&&team.name!==team.orig?`<span class="badge bAlt" title="Renomeada na simulação">era ${esc(team.orig)}</span>`:''}
-      <button class="linkbtn" title="Renomear distrital" onclick="renameTeamPrompt(${ti})">renomear</button>
+      <button class="linkbtn" title="Editar gerente e nome da equipe" onclick="renameTeamPrompt(${ti})">renomear</button>
       <button class="linkbtn warn" title="Excluir distrital" onclick="deleteTeam(${ti})">excluir</button>
       <span style="color:var(--mut2);font-size:11.5px">${team.sIdxs.length} setores</span>
       ${stY?`<span style="color:var(--mut);font-size:12px">YTD <b class="num" style="color:var(--txt)">${fmtBRL(ty)}</b> ${evoHtml(ty,tyr)}</span>`:''}
@@ -2217,6 +2272,13 @@ function openChanges(){
 }
 $('btnChanges').onclick=openChanges;
 $('cmClose').onclick=()=>$('changesModalBg').classList.remove('open');
+$('tmClose').onclick=closeTeamModal;
+$('tmCancel').onclick=closeTeamModal;
+$('tmSave').onclick=saveTeamModal;
+$('teamModalBg').onclick=e=>{if(e.target===$('teamModalBg'))closeTeamModal();};
+$('tmGerente').oninput=tmUpdatePreview;
+$('tmEquipe').oninput=tmUpdatePreview;
+$('tmGerente').onkeydown=$('tmEquipe').onkeydown=e=>{if(e.key==='Enter')saveTeamModal();if(e.key==='Escape')closeTeamModal();};
 $('changesModalBg').onclick=e=>{if(e.target===$('changesModalBg'))$('changesModalBg').classList.remove('open');};
 
 /* ---------- topbar actions ---------- */
