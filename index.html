@@ -108,6 +108,20 @@ body.mapaFull #mapaStats{display:flex}
 .stbl tr.dragging{opacity:.45}
 .teamband.dropok,.extband.dropok{outline:2px dashed var(--alt);outline-offset:3px;border-radius:var(--radius)}
 .extband{margin-bottom:30px;border:1px solid var(--border2);border-radius:var(--radius);overflow:hidden;background:var(--panel)}
+.extchips{display:flex;flex-wrap:wrap;gap:8px;padding:10px 16px}
+.extchip{display:inline-flex;align-items:center;gap:7px;padding:6px 10px;border:1px solid var(--border2);border-radius:999px;font-size:12px;cursor:grab;background:var(--panel);white-space:nowrap}
+.extchip:hover{background:var(--panel2)}
+.extchip.dragging{opacity:.45}
+.extchip i{width:8px;height:8px;border-radius:2px;flex:none}
+.extchip i.cP{background:var(--prime)}
+.extchip i.cI{background:var(--inf)}
+.extchip .pill{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px}
+.extchip .pill.warn{background:rgba(230,140,30,.14);color:#b06a10}
+.extchip .pill.ok{background:rgba(40,160,90,.14);color:var(--pos)}
+.pendprog{display:flex;align-items:center;gap:10px;margin-left:auto;font-size:12px;color:var(--mut)}
+.pendprog b{color:var(--alt)}
+.pbar{width:140px;height:6px;border-radius:999px;background:var(--border);overflow:hidden}
+.pbar i{display:block;height:100%;background:var(--alt);border-radius:999px}
 .exthead{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;background:var(--panel2);padding:11px 16px;border-bottom:1px solid var(--border)}
 .exthead .tname{font-family:'Archivo';font-weight:800;font-size:14px;letter-spacing:.06em;color:var(--mut)}
 .extrow{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--border);font-size:12.5px;cursor:grab;background:var(--panel)}
@@ -255,9 +269,9 @@ tr.moff td .badge{opacity:1}
     <div class="upcard" id="cardEstudo">
       <div class="step">Arquivo 1</div>
       <h3>Estudo de setorização</h3>
-      <p>Planilha com a aba SETORIZAÇÃO ESTUDO AGOSTO: equipes (GD), setores, nomes e linhas.</p>
+      <p>Planilhas da nova configuração 2026: aba tipo "Setorização 2026" ou "Setores agosto 2026" (equipes, setores e linhas) e, se houver, aba "BRICKs 2026" com a alocação brick a brick. Pode selecionar mais de um arquivo.</p>
       <div class="fname" id="fnEstudo"></div>
-      <input type="file" id="fileEstudo" accept=".xlsx" hidden>
+      <input type="file" id="fileEstudo" accept=".xlsx" hidden multiple>
     </div>
     <div class="upcard" id="cardBase">
       <div class="step">Arquivo 2</div>
@@ -348,12 +362,12 @@ tr.moff td .badge{opacity:1}
 <div class="modalBg" id="teamModalBg">
   <div class="modal" style="max-width:460px">
     <div class="mhead">
-      <div><h2 id="tmTitle">Editar equipe</h2><div class="meta">O nome final é formado pelo gerente e pelo nome da equipe. A equipe soma os setores que estiverem dentro dela.</div></div>
+      <div><h2 id="tmTitle">Editar equipe</h2><div class="meta">O nome final é formado pelo número da equipe e pelo gerente. A equipe soma os setores que estiverem dentro dela.</div></div>
       <button class="mclose" id="tmClose">&times;</button>
     </div>
     <div class="mbody" style="padding-top:16px">
+      <div class="tmField"><label for="tmNumero">Número da equipe</label><input id="tmNumero" type="text" placeholder="ex.: GD 6" autocomplete="off"></div>
       <div class="tmField"><label for="tmGerente">Gerente</label><input id="tmGerente" type="text" placeholder="ex.: MICHEL" autocomplete="off"></div>
-      <div class="tmField"><label for="tmEquipe">Nome da equipe</label><input id="tmEquipe" type="text" placeholder="ex.: GD 01 SERRA" autocomplete="off"></div>
       <div class="tmPreview"><span class="lb">Nome final da equipe</span><span class="val" id="tmPreview">&nbsp;</span></div>
       <div class="tmFoot"><button class="btn" id="tmCancel">Cancelar</button><button class="btn primary" id="tmSave">Salvar</button></div>
     </div>
@@ -623,8 +637,8 @@ $('cardEstudo').onclick=()=>$('fileEstudo').click();
 $('cardBase').onclick=()=>$('fileBase').click();
 $('fileEstudo').onchange=e=>{
   if(!e.target.files.length)return;
-  S.filesEstudo=e.target.files[0];
-  $('fnEstudo').textContent=S.filesEstudo.name;
+  S.filesEstudo=Array.from(e.target.files);
+  $('fnEstudo').textContent=S.filesEstudo.map(f=>f.name).join(' + ');
   $('cardEstudo').classList.add('ok');
   checkReady();
 };
@@ -658,6 +672,8 @@ $('btnProcess').onclick=async()=>{
     setProg(99,'Salvando dados no navegador...');
     await idbSave().catch(()=>{});
     buildTeams();
+    const nAlloc=applyBrickAlloc();
+    if(nAlloc)console.log(nAlloc+' bricks pre-alocados pela aba BRICKs 2026');
     applyDefaultOff();
     applySaved();
     $('uploadScreen').style.display='none';
@@ -719,6 +735,7 @@ function bootFromCache(d){
   S.bArr=new Int32Array(d.bArr);S.mArr=new Int16Array(d.mArr);S.vArr=new Float64Array(d.vArr);
   S.nCombos=S.bArr.length;
   buildTeams();
+  applyBrickAlloc();
   applyDefaultOff();
   applySaved();
   $('uploadScreen').style.display='none';
@@ -744,23 +761,32 @@ function setProg(pct,txt){
 }
 
 /* ---------- estudo parse ---------- */
-async function parseEstudo(file){
-  const buf=await file.arrayBuffer();
-  const wb=XLSX.read(buf,{type:'array'});
-  let name=wb.SheetNames.find(n=>normTxt(n).includes('ESTUDO'))||wb.SheetNames[0];
-  const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:null});
-  // localizar linha de cabecalho e indices
+function estudoSheetScore(n){
+  const t=normTxt(n);
+  let sc=0;
+  if(t.includes('ESTUDO'))sc+=8;
+  if(t.includes('SETORIZACAO'))sc+=8;
+  else if(t.includes('SETOR'))sc+=4;         // cobre SETOR / SETORES
+  if(t.includes('2026'))sc+=4;
+  if(t.includes('AGOSTO'))sc+=3;
+  else if(/(^|[^A-Z])AGO([^A-Z]|$)/.test(t))sc+=2;
+  if(t.includes('NUMERACAO'))sc+=4;
+  if(t.includes('NOVA')||t.includes('NOVO'))sc+=1;
+  if(t.includes('EXTINT')||t.includes('ENCERRAD'))sc-=20; // aba de setores extintos nao e a principal
+  return sc;
+}
+function findEstudoHeader(rows){
   let hIdx=-1,ci={};
   for(let r=0;r<Math.min(rows.length,10);r++){
     const cols=(rows[r]||[]).map(c=>normTxt(c));
-    if(cols.some(c=>c==='SETOR NOVO')){
+    if(cols.some(c=>c.startsWith('SETOR NOVO'))){
       hIdx=r;
       cols.forEach((c,i)=>{
         if(c==='SETOR ESPELHO')ci.esp=i;
-        else if(c==='SETOR ANTIGO')ci.ant=i;
-        else if(c==='SETOR NOVO')ci.novo=i;
+        else if(c.startsWith('SETOR ANTIGO'))ci.ant=i;
+        else if(c.startsWith('SETOR NOVO'))ci.novo=i;
         else if(c==='NOME')ci.nome=i;
-        else if(c==='LINHA ATUAL')ci.linha=i;
+        else if(c.startsWith('LINHA'))ci.linha=i;
         else if(c==='STATUS')ci.status=i;
         else if(c==='NOVA SEDE')ci.sede=i;
         else if(c==='REGIONAL')ci.reg=i;
@@ -774,7 +800,61 @@ async function parseEstudo(file){
       break;
     }
   }
-  if(hIdx<0)throw new Error('Aba do estudo sem coluna SETOR NOVO');
+  return{hIdx,ci};
+}
+async function parseEstudo(files){
+  const list=Array.isArray(files)?files:(files&&typeof files.length==='number'?Array.from(files):[files]);
+  const acc={teams:null,gr:null,extintos:[],brickAlloc:[]};
+  for(const file of list){
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(buf,{type:'array'});
+    parseEstudoWB(wb,acc);
+  }
+  if(!acc.teams)throw new Error('Nenhuma aba de setorização encontrada (procure por abas como "Setorização 2026" ou "Setores agosto 2026" com a coluna SETOR NOVO)');
+  S.study={teams:acc.teams,gr:acc.gr,extintos:acc.extintos,brickAlloc:acc.brickAlloc};
+  S.studyByNum=new Map();
+  acc.teams.forEach(t=>t.sectors.forEach(s=>S.studyByNum.set(s.num,s)));
+}
+function parseEstudoWB(wb,acc){
+  // aba de alocacao de bricks 2026 (LINHA, BRICK, ANTIGO SETOR, NOVO SETOR)
+  const brName=wb.SheetNames.find(n=>normTxt(n).includes('BRICK'));
+  if(brName){
+    const br=XLSX.utils.sheet_to_json(wb.Sheets[brName],{header:1,defval:null});
+    let bh=-1,bc={};
+    for(let r=0;r<Math.min(br.length,10);r++){
+      const cols=(br[r]||[]).map(c=>normTxt(c));
+      const iB=cols.findIndex(c=>c.startsWith('BRICK'));
+      const iN=cols.findIndex(c=>c.includes('NOVO')&&c.includes('SETOR'));
+      if(iB>=0&&iN>=0){bh=r;bc={b:iB,n:iN,l:cols.findIndex(c=>c.startsWith('LINHA'))};break;}
+    }
+    if(bh>=0){
+      for(let r=bh+1;r<br.length;r++){
+        const row=br[r]||[];
+        const bcell=row[bc.b],ncell=row[bc.n];
+        if(!bcell||!ncell)continue;
+        const bm=String(bcell).match(/^\s*0*(\d+)/);
+        if(!bm)continue;
+        const lt=bc.l>=0?normTxt(row[bc.l]):'';
+        const L=lt.includes('INFINITY')?1:(lt.includes('PRIME')?0:-1);
+        if(L<0)continue;
+        const parts=String(ncell).split(' - ');
+        const num=parseInt(parts[0],10)||0;
+        if(!num)continue;
+        acc.brickAlloc.push({L,code:bm[1],novo:num,nome:parts.slice(1).join(' - ').trim()});
+      }
+    }
+  }
+  // aba principal de setorizacao (com a coluna SETOR NOVO)
+  const scored=wb.SheetNames.map((n,i)=>({n,i,sc:estudoSheetScore(n)}));
+  const cand=scored.filter(x=>x.sc>0).sort((a,b)=>b.sc-a.sc||a.i-b.i)
+    .concat(scored.filter(x=>x.sc<=0));
+  let rows=null,hIdx=-1,ci={},scUsed=0;
+  for(const c of cand){
+    const rr=XLSX.utils.sheet_to_json(wb.Sheets[c.n],{header:1,defval:null});
+    const h=findEstudoHeader(rr);
+    if(h.hIdx>=0){rows=rr;hIdx=h.hIdx;ci=h.ci;scUsed=c.sc;break;}
+  }
+  if(hIdx<0)return; // este arquivo pode ser so a base de bricks 2026
   const teams=[];let cur=null,grRow=null;
   for(let r=hIdx+1;r<rows.length;r++){
     const row=rows[r]||[];
@@ -798,11 +878,17 @@ async function parseEstudo(file){
       tel:ci.tel!==undefined?String(row[ci.tel]||'').trim():'',
       statusTxt:ci.status!==undefined?String(row[ci.status]||'').trim():''
     };
-    if(status==='GR'){
+    if(status==='GR'||(!status&&num%100000===0)){
       grRow={num,nome:String(nome).replace(/\u00a0/g,' ').trim(),
         linhaTxt:String(row[ci.linha]||'').trim(),
         espelho:row[ci.esp]||'',antigo:row[ci.ant]||'',
         sede:ci.sede!==undefined?String(row[ci.sede]||'').trim():'',...raw};
+      continue;
+    }
+    if(status==='GD'||(!status&&num%100===0)){
+      // linha de GD/equipe (STATUS GD; ou, sem status, numero terminado em "00"); o nome e o gerente
+      cur={name:(String(num)+' - '+String(nome).replace(/\u00a0/g,' ').trim()).toUpperCase(),sectors:[]};
+      teams.push(cur);
       continue;
     }
     if(!cur){cur={name:'EQUIPE',sectors:[]};teams.push(cur);}
@@ -816,9 +902,22 @@ async function parseEstudo(file){
       ...raw
     });
   }
-  S.study={teams,gr:grRow};
-  S.studyByNum=new Map();
-  teams.forEach(t=>t.sectors.forEach(s=>S.studyByNum.set(s.num,s)));
+  // aba de setores extintos (encerrados no estudo): so os bricks deles precisam de realocacao
+  const extName=wb.SheetNames.find(n=>normTxt(n).includes('EXTINT')||normTxt(n).includes('ENCERRAD'));
+  if(extName){
+    const er=XLSX.utils.sheet_to_json(wb.Sheets[extName],{header:1,defval:null});
+    const eh=findEstudoHeader(er);
+    if(eh.hIdx>=0){
+      for(let r=eh.hIdx+1;r<er.length;r++){
+        const row=er[r]||[];
+        const eNovo=parseInt(row[eh.ci.novo],10)||0;
+        const eAnt=eh.ci.ant!==undefined?(parseInt(row[eh.ci.ant],10)||0):0;
+        const eNome=eh.ci.nome!==undefined&&row[eh.ci.nome]!=null?String(row[eh.ci.nome]).replace(/\u00a0/g,' ').trim():'';
+        if(eNovo||eAnt)acc.extintos.push({novo:eNovo,ant:eAnt,nome:eNome});
+      }
+    }
+  }
+  if(acc.teams===null||scUsed>(acc.teamsScore||0)){acc.teams=teams;acc.gr=grRow;acc.teamsScore=scUsed;}
 }
 
 /* ---------- worker ---------- */
@@ -851,17 +950,88 @@ function runWorker(buffer){
   });
 }
 
+// aplica a aba BRICKs 2026 como ponto de partida: cada brick ja nasce alocado no setor do estudo
+function applyBrickAlloc(){
+  const alloc=S.study&&S.study.brickAlloc;
+  if(!alloc||!alloc.length||!S.bricks||!S.bricks.length)return 0;
+  const nmKey=s=>normTxt(s).replace(/\s+/g,' ');
+  const first=s=>nmKey(s).split(' ')[0]||'';
+  const byNum=new Map(),byName=new Map();
+  S.setores.forEach((s,i)=>{
+    if(!byNum.has(s.num))byNum.set(s.num,i);
+    const k1=nmKey(s.nomeEstudo||'');if(k1&&k1!=='VAGO'&&!byName.has(k1))byName.set(k1,i);
+    const k2=nmKey(s.nome);if(k2&&k2!=='VAGO'&&!byName.has(k2))byName.set(k2,i);
+  });
+  const byCode=new Map();
+  S.bricks.forEach((b,i)=>{const m=String(b.name).match(/^\s*0*(\d+)/);if(m&&!byCode.has(m[1]))byCode.set(m[1],i);});
+  let n=0;
+  for(const a of alloc){
+    const b=byCode.get(a.code);
+    if(b===undefined)continue;
+    let t=byNum.get(a.novo);
+    if(t!==undefined&&a.nome){
+      const f1=first(a.nome),f2=first(S.setores[t].nomeEstudo||S.setores[t].nome);
+      if(f1&&f2&&f1!==f2)t=undefined; // numero coincidiu mas a pessoa e outra
+    }
+    if(t===undefined&&a.nome)t=byName.get(nmKey(a.nome));
+    if(t===undefined)continue;
+    if(a.L===0){if(S.bricks[b].sP!==t){S.bricks[b].sP=t;n++;}}
+    else{if(S.bricks[b].sI!==t){S.bricks[b].sI=t;n++;}}
+  }
+  return n;
+}
 /* ---------- teams display structure ---------- */
 function buildTeams(){
   const byNum=new Map();
   S.setores.forEach((s,i)=>byNum.set(s.num,i));
+  // indice por nome: a base de vendas usa numeracao propria e os mesmos numeros apontam
+  // para pessoas diferentes no estudo, entao o nome do vendedor e a chave confiavel
+  const NMSTOP=new Set(['DE','DA','DO','DOS','DAS','E']);
+  const nmKey=s=>normTxt(s).replace(/\s+/g,' ');
+  const nmToks=s=>nmKey(s).split(' ').filter(t=>t&&!NMSTOP.has(t));
+  const byName=new Map();
+  S.setores.forEach((s,i)=>{const k=nmKey(s.nome);if(k&&k!=='VAGO'){if(!byName.has(k))byName.set(k,[]);byName.get(k).push(i);}});
   const used=new Set();
   S.teams=[];
   if(S.study){
     for(const t of S.study.teams){
       const team={name:t.name,sIdxs:[]};
       for(const st of t.sectors){
-        const idx=byNum.get(st.num);
+        // 1) nome exato; 2) nome aproximado (mesmo primeiro nome + 2 tokens em comum, ex.: sobrenome de casada);
+        // 3) SETOR NOVO; 4) SETOR ANTIGO
+        let idx;
+        const k=nmKey(st.nome);
+        if(k&&k!=='VAGO'){
+          const c=(byName.get(k)||[]).filter(i=>!used.has(i));
+          if(c.length===1)idx=c[0];
+          if(idx===undefined){
+            const t1=nmToks(st.nome);
+            if(t1.length){
+              let best=-1,bs=0,amb=false;
+              for(let i=0;i<S.setores.length;i++){
+                if(used.has(i))continue;
+                const t2=nmToks(S.setores[i].nome);
+                if(!t2.length||t2[0]!==t1[0])continue;
+                let sh=0;for(const x of new Set(t1))if(t2.includes(x))sh++;
+                if(sh>=2){if(sh>bs){bs=sh;best=i;amb=false;}else if(sh===bs)amb=true;}
+              }
+              if(best>=0&&!amb)idx=best;
+            }
+          }
+        }
+        if(idx===undefined){
+          const stFirst=nmToks(st.nome)[0]||'';
+          const stVago=!stFirst||stFirst==='VAGO';
+          for(const key of[st.num,parseInt(st.antigo,10)]){
+            if(!key)continue;
+            const ni=byNum.get(key);
+            if(ni===undefined||used.has(ni))continue;
+            const bFirst=nmToks(S.setores[ni].nome)[0]||'';
+            const bVago=!bFirst||bFirst==='VAGO';
+            if(!stVago&&!bVago&&stFirst!==bFirst)continue; // mesmo numero, pessoa diferente: nao roubar o setor
+            idx=ni;break;
+          }
+        }
         if(idx!==undefined){
           team.sIdxs.push(idx);used.add(idx);
           // preferir nome do estudo (com acentos) e guardar metadados
@@ -869,6 +1039,12 @@ function buildTeams(){
           S.setores[idx].sede=st.sede;
           S.setores[idx].espelho=st.espelho;
           S.setores[idx].antigo=st.antigo;
+          if(S.setores[idx].num!==st.num){
+            // renumerar para a numeracao 2026, guardando o numero da base
+            S.setores[idx].numAntigo=S.setores[idx].num;
+            S.setores[idx].num=st.num;
+            S.setores[idx].code=st.num+' - '+(S.setores[idx].nome||st.nome);
+          }
         }else{
           // setor do estudo sem vendas na base
           const nIdx=S.setores.length;
@@ -881,13 +1057,25 @@ function buildTeams(){
     }
   }
   const rest=[];
-  S.setores.forEach((s,i)=>{s.extinto=false;s.extintoBase=false;if(!used.has(i))rest.push(i);});
+  S.setores.forEach((s,i)=>{s.extinto=false;s.extintoBase=false;s.foraEscopo=false;if(!used.has(i))rest.push(i);});
   rest.sort((a,b)=>S.setores[a].num-S.setores[b].num);
   S.extintos=[];
   if(rest.length){
     if(S.study){
-      // setores desligados na reestruturacao: os bricks deles entram como "a realocar"
-      for(const i of rest){S.setores[i].extinto=true;S.setores[i].extintoBase=true;S.extintos.push(i);}
+      // apenas setores listados na aba de extintos do estudo viram encerrados (bricks a realocar);
+      // os demais setores da base que nao estao no estudo (outras UFs/distritais) ficam fora do escopo
+      const extNums=new Set(),extNames=new Set();
+      for(const x of(S.study.extintos||[])){
+        if(x.novo)extNums.add(x.novo);
+        if(x.ant)extNums.add(x.ant);
+        const kn=nmKey(x.nome);
+        if(kn&&kn!=='VAGO')extNames.add(kn);
+      }
+      for(const i of rest){
+        const s=S.setores[i];
+        if(extNums.has(s.num)||extNames.has(nmKey(s.nome))){s.extinto=true;s.extintoBase=true;S.extintos.push(i);}
+        else s.foraEscopo=true;
+      }
     }else{
       S.teams.push({name:'TODOS OS SETORES',sIdxs:rest});
     }
@@ -993,17 +1181,18 @@ function applyRename(tb,newName){
 }
 /* modal gerente + equipe: nome final = "GERENTE - EQUIPE" */
 let teamModalTi=-2; // -2 fechado, -1 nova distrital, >=0 renomear
-function composeTeamName(g,e){
-  g=normTeamName(g);e=normTeamName(e);
-  return [g,e].filter(Boolean).join(' - ');
+function composeTeamName(num,g){
+  num=normTeamName(num);g=normTeamName(g);
+  if(/^\d+$/.test(num))num='GD '+num;
+  return [num,g].filter(Boolean).join(' - ');
 }
 function splitTeamName(name){
   const p=String(name||'').split(' - ');
-  if(p.length>=2)return{gerente:p[0].trim(),equipe:p.slice(1).join(' - ').trim()};
-  return{gerente:'',equipe:String(name||'').trim()};
+  if(p.length>=2)return{numero:p[0].trim(),gerente:p.slice(1).join(' - ').trim()};
+  return{numero:String(name||'').trim(),gerente:''};
 }
 function tmUpdatePreview(){
-  const nm=composeTeamName($('tmGerente').value,$('tmEquipe').value);
+  const nm=composeTeamName($('tmNumero').value,$('tmGerente').value);
   $('tmPreview').textContent=nm||'\u00a0';
 }
 function openTeamModal(ti){
@@ -1012,21 +1201,21 @@ function openTeamModal(ti){
     const tb=S.teamsBase[ti];if(!tb){teamModalTi=-2;return;}
     const sp=splitTeamName(tb.name);
     $('tmTitle').textContent='Editar equipe';
+    $('tmNumero').value=sp.numero;
     $('tmGerente').value=sp.gerente;
-    $('tmEquipe').value=sp.equipe;
   }else{
     $('tmTitle').textContent='Nova equipe';
+    $('tmNumero').value='';
     $('tmGerente').value='';
-    $('tmEquipe').value='';
   }
   tmUpdatePreview();
   $('teamModalBg').classList.add('open');
-  setTimeout(()=>$('tmGerente').focus(),0);
+  setTimeout(()=>$('tmNumero').focus(),0);
 }
 function closeTeamModal(){teamModalTi=-2;$('teamModalBg').classList.remove('open');}
 function saveTeamModal(){
-  const name=composeTeamName($('tmGerente').value,$('tmEquipe').value);
-  if(!name){toast('Informe o gerente ou o nome da equipe');return;}
+  const name=composeTeamName($('tmNumero').value,$('tmGerente').value);
+  if(!name){toast('Informe o número da equipe ou o gerente');return;}
   if(teamModalTi>=0){
     const tb=S.teamsBase[teamModalTi];
     if(!tb){closeTeamModal();return;}
@@ -1343,6 +1532,16 @@ function ordenaPend(rows){
   });
 }
 function pendOpenSet(k,on){if(on)pendOpen.add(k);else pendOpen.delete(k);}
+function pendMovedCount(){
+  let moved=0;
+  for(const k of S.brickOv.keys()){
+    const p=String(k).split('|');const b=+p[0],L=+p[1];
+    if(!S.bricks[b])continue;
+    const base=L===0?S.bricks[b].sP:S.bricks[b].sI;
+    if(base>=0&&S.setores[base]&&(S.setores[base].extinto||efLinha(base)!==L))moved++;
+  }
+  return moved;
+}
 function renderPending(pd){
   const pend=cache.pend;
   if(!pend[0].length&&!pend[1].length){pendSel.clear();return '';}
@@ -1350,7 +1549,12 @@ function renderPending(pd){
   const valid=new Set();
   for(let L=0;L<2;L++)for(const r of pend[L])valid.add(r.b+'|'+L);
   for(const k of pendSel)if(!valid.has(k))pendSel.delete(k);
-  let html='<div class="pendband" id="pendBlock"><div class="pendhead"><span class="tname">BRICKS A REALOCAR</span><span style="color:var(--mut);font-size:11.5px">bricks sem setor na linha (setores desligados no estudo ou convertidos de linha): distribua entre os setores ativos da linha</span></div>';
+  const nRest=pend[0].length+pend[1].length;
+  let vRest=0;
+  for(let L=0;L<2;L++)for(const r of pend[L])vRest+=cache.bs.cur[r.b*2+L];
+  const moved=pendMovedCount(),tot=moved+nRest,pct=tot?Math.round(moved*100/tot):0;
+  let html='<div class="pendband" id="pendBlock"><div class="pendhead"><span class="tname">BRICKS A REALOCAR</span><span style="color:var(--mut);font-size:11.5px">bricks sem setor na linha (setores desligados no estudo ou convertidos de linha): distribua entre os setores ativos da linha</span>'
+    +`<span class="pendprog"><span><b>${moved}</b> de ${tot} realocados</span><span class="pbar"><i style="width:${pct}%"></i></span><span>faltam <b>${nRest}</b> (${fmtBRL(vRest)})</span></span></div>`;
   for(let L=0;L<2;L++){
     if(!pend[L].length)continue;
     // agrupar por setor de origem
@@ -1462,23 +1666,25 @@ function renderEncerrados(){
       pc.set(r.orig,(pc.get(r.orig)||0)+1);
     }
   }
-  let rows='';
+  let chips='';
   const ord=(S.extintos||[]).slice().sort((a,b)=>S.setores[a].num-S.setores[b].num);
   for(const i of ord){
     const s=S.setores[i];
     const L=efLinha(i);
-    rows+=`<div class="extrow" draggable="true" ondragstart="dragSetor(event,${i})" ondragend="dragEndSetor(event)" title="Arraste para uma equipe para reativar este setor na simulação">
+    const n=pc.get(i)||0;
+    const nome=s.nomeEstudo||s.nome;
+    const curto=nome.split(' ').slice(0,2).join(' ');
+    chips+=`<div class="extchip" draggable="true" ondragstart="dragSetor(event,${i})" ondragend="dragEndSetor(event)" title="${esc(nome)} (${LNAME[L]})${s.extintoBase?'':' - encerrado na simulação'}\n${n?n+' bricks a realocar: '+fmtBRL(pv.get(i)||0):'todos os bricks já realocados'}\nArraste para uma equipe para reativar">
+      <i class="${L===0?'cP':'cI'}"></i>
       <span class="num" style="color:var(--mut);font-weight:600">${s.num}</span>
-      <span style="font-weight:600">${esc(s.nomeEstudo||s.nome)}</span>
-      <span class="badge ${L===0?'bP':'bI'}">${LNAME[L]}</span>
-      ${s.extintoBase?'':'<span class="badge bAlt">encerrado na simulação</span>'}
-      <span style="margin-left:auto;color:var(--mut);font-size:12px">${pc.get(i)||0} bricks a realocar</span>
-      <span class="num" style="font-family:'Archivo';font-weight:700">${fmtBRL(pv.get(i)||0)}</span>
+      <span style="font-weight:600">${esc(curto)}</span>
+      ${s.extintoBase?'':'<span class="badge bAlt">simulação</span>'}
+      <span class="pill ${n?'warn':'ok'}">${n?n+' bricks':'ok'}</span>
     </div>`;
   }
   return `<div class="extband" ondragover="dragOverZone(event,this)" ondragleave="dragLeaveZone(event,this)" ondrop="dropDesligar(event,this)">
-    <div class="exthead"><span class="tname">SETORES ENCERRADOS</span><span style="color:var(--mut);font-size:11.5px">arraste um setor daqui para uma equipe para reativá-lo, ou solte um setor ativo aqui para encerrá-lo na simulação</span></div>
-    ${rows||'<div style="color:var(--mut2);font-size:12.5px;padding:10px 16px">Nenhum setor encerrado. Solte um setor de qualquer equipe aqui para encerrá-lo.</div>'}
+    <div class="exthead"><span class="tname">SETORES ENCERRADOS</span><span style="color:var(--mut);font-size:11.5px">arraste um chip para uma equipe para reativar o setor, ou solte um setor ativo aqui para encerrá-lo; o número no chip indica quantos bricks dele ainda faltam realocar</span></div>
+    ${chips?`<div class="extchips">${chips}</div>`:'<div style="color:var(--mut2);font-size:12.5px;padding:10px 16px">Nenhum setor encerrado. Solte um setor de qualquer equipe aqui para encerrá-lo.</div>'}
   </div>`;
 }
 function renderTeams(){
@@ -2276,9 +2482,9 @@ $('tmClose').onclick=closeTeamModal;
 $('tmCancel').onclick=closeTeamModal;
 $('tmSave').onclick=saveTeamModal;
 $('teamModalBg').onclick=e=>{if(e.target===$('teamModalBg'))closeTeamModal();};
+$('tmNumero').oninput=tmUpdatePreview;
 $('tmGerente').oninput=tmUpdatePreview;
-$('tmEquipe').oninput=tmUpdatePreview;
-$('tmGerente').onkeydown=$('tmEquipe').onkeydown=e=>{if(e.key==='Enter')saveTeamModal();if(e.key==='Escape')closeTeamModal();};
+$('tmNumero').onkeydown=$('tmGerente').onkeydown=e=>{if(e.key==='Enter')saveTeamModal();if(e.key==='Escape')closeTeamModal();};
 $('changesModalBg').onclick=e=>{if(e.target===$('changesModalBg'))$('changesModalBg').classList.remove('open');};
 
 /* ---------- topbar actions ---------- */
