@@ -360,6 +360,7 @@ body.mapaFull #cenBar{display:none}
   </div>
 
   <div id="cenBar"></div>
+  <input type="file" id="cenFile" accept=".xlsx,.json" hidden>
 
   <div id="summary"></div>
   <div id="splitBarWrap">
@@ -3329,8 +3330,113 @@ function renderCenarios(){
   }
   html+=`<button class="btn" onclick="salvarComoCenario()" title="Guarda a simulação que está na tela como um novo cenário">Salvar como cenário</button>`;
   if(cenAtivo)html+=`<button class="btn" onclick="atualizarCenario()" title="Grava a simulação atual por cima do cenário selecionado">Atualizar "${esc((cenPorId(cenAtivo)||{}).nome||'')}"</button>`;
+  html+=`<button class="btn" onclick="exportarCenarioArquivo()" title="Baixa um Excel com a simulação para enviar a outra pessoa">Exportar cenário</button>`;
+  html+=`<button class="btn" onclick="document.getElementById('cenFile').click()" title="Abre um cenário recebido: o Excel do cenário ou a setorização exportada">Importar cenário</button>`;
   el.innerHTML=html;
 }
+/* ---------- troca de cenarios entre pessoas ----------
+   o snapshot referencia bricks pelo nome e setores pelo numero, entao ele funciona em
+   qualquer maquina que tenha carregado a mesma base. o arquivo .json e leve; o Excel
+   exportado tambem carrega o mesmo conteudo na aba CENARIO. */
+function cenNomeArquivo(nome){
+  const k=normTxt(nome||'simulacao').replace(/[^A-Z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+  return 'CENARIO_'+(k||'SIMULACAO')+'.xlsx';
+}
+function cenPacote(){
+  const c=cenPorId(cenAtivo);
+  return{app:LS_KEY,v:1,nome:(c&&c.nome)||'Simulação',ts:Date.now(),dados:snapshotState()};
+}
+/* aba tecnica com a simulacao serializada, lida de volta pelo Importar cenário */
+function abaCenario(pack){
+  const txt=JSON.stringify(pack||cenPacote());
+  const rows=[[cS('CENARIO DA SIMULAÇÃO — não editar. No simulador, use "Importar cenário" e escolha este arquivo para reabrir esta setorização.',XS.hdr)]];
+  for(let i=0;i<txt.length;i+=15000)rows.push([cT(txt.slice(i,i+15000),0)]);
+  return{name:'CENARIO',xml:sheetXml(rows,[120],0)};
+}
+/* aba legivel, para a pessoa conferir o que mudou sem abrir o simulador */
+function abaCenarioResumo(pack){
+  const d=pack.dados,rows=[];
+  rows.push([cS('CENÁRIO',XS.hdr),cS(pack.nome||'',XS.hdr)]);
+  rows.push([cT('Exportado em',0),cT(new Date(pack.ts||Date.now()).toLocaleString('pt-BR'),0)]);
+  rows.push([cT('Total de alterações',0),cN(cenPeso(d),0)]);
+  rows.push([]);
+  rows.push([cS('TIPO',XS.hdr),cS('ITEM',XS.hdr),cS('DE',XS.hdr),cS('PARA',XS.hdr)]);
+  const nomeSetor=num=>{
+    const i=S.setores.findIndex(s=>s.num===num);
+    return i<0?String(num||''):String(num)+' - '+(S.setores[i].nomeEstudo||S.setores[i].nome);
+  };
+  for(const[bn,lk,dest]of(d.mb||[]))
+    rows.push([cT('BRICK',1),cT(bn,1),cT(lk==='P'?'PRIME':'INFINITY',1),cT(nomeSetor(dest),1)]);
+  for(const[num,name]of(d.tv||[]))
+    rows.push([cT('SETOR MUDOU DE DISTRITAL',1),cT(nomeSetor(num),1),cT('',1),cT(name,1)]);
+  for(const[num,lk]of(d.sl||[]))
+    rows.push([cT('SETOR MUDOU DE LINHA',1),cT(nomeSetor(num),1),cT('',1),cT(lk==='P'?'PRIME':'INFINITY',1)]);
+  for(const num of(d.dg||[]))
+    rows.push([cT('SETOR ENCERRADO',2),cT(nomeSetor(num),2),cT('',2),cT('',2)]);
+  for(const[num,name]of(d.rv||[]))
+    rows.push([cT('SETOR REATIVADO',3),cT(nomeSetor(num),3),cT('',3),cT(name,3)]);
+  for(const[o,n]of(d.tn||[]))
+    rows.push([cT('DISTRITAL RENOMEADA',1),cT('',1),cT(o,1),cT(n,1)]);
+  for(const n of(d.ta||[]))
+    rows.push([cT('DISTRITAL CRIADA',3),cT(n,3),cT('',3),cT('',3)]);
+  for(const o of(d.td||[]))
+    rows.push([cT('DISTRITAL EXCLUÍDA',2),cT(o,2),cT('',2),cT('',2)]);
+  for(const[mn,lk]of(d.mo||[]))
+    rows.push([cT('MARCA MUDOU DE LINHA',1),cT(mn,1),cT('',1),cT(lk==='P'?'PRIME':'INFINITY',1)]);
+  for(const mn of(d.mx||[]))
+    rows.push([cT('MARCA EXCLUÍDA',2),cT(mn,2),cT('',2),cT('',2)]);
+  if(rows.length===5)rows.push([cT('',0),cT('Nenhuma alteração: cenário na configuração original da base',0)]);
+  return{name:'RESUMO',xml:sheetXml(rows,[30,44,34,44],0)};
+}
+async function exportarCenarioArquivo(){
+  const pack=cenPacote();
+  if(!cenPeso(pack.dados)&&!confirm('A simulação está na configuração original, sem alterações. Exportar assim mesmo?'))return;
+  try{
+    await baixarXlsx([abaCenarioResumo(pack),abaCenario(pack)],cenNomeArquivo(pack.nome));
+    toast('Cenário exportado em Excel: quem receber precisa carregar a mesma base antes de importar');
+  }catch(err){
+    toast('Não consegui gerar o arquivo do cenário');
+  }
+}
+async function importarCenarioArquivo(f){
+  try{
+    let pack=null;
+    if(/\.json$/i.test(f.name)){
+      pack=JSON.parse(await f.text());
+    }else{
+      const wb=XLSX.read(await f.arrayBuffer(),{type:'array'});
+      const aba=wb.SheetNames.find(n=>normTxt(n).includes('CENARIO'));
+      if(!aba)throw new Error('Este Excel não tem a aba CENARIO. Ele foi gerado por uma versão anterior: peça o arquivo .json do cenário ou exporte a setorização de novo.');
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[aba],{header:1,defval:''});
+      let txt='';
+      for(let r=1;r<rows.length;r++)txt+=String(rows[r]&&rows[r][0]!=null?rows[r][0]:'');
+      if(!txt.trim())throw new Error('A aba CENARIO está vazia.');
+      pack=JSON.parse(txt);
+    }
+    const dados=pack&&pack.dados?pack.dados:pack;
+    if(!dados||typeof dados!=='object'||!('mb'in dados))throw new Error('Este arquivo não parece ser um cenário do simulador.');
+    const peso=cenPeso(dados);
+    const nome=(pack&&pack.nome)||f.name;
+    if(!confirm(`Carregar o cenário "${nome}" (${peso} alteraç${peso===1?'ão':'ões'})?\n\nA simulação que está na tela será substituída.`))return;
+    limparSimulacao();
+    const n=applySnapshot(dados,true);
+    cenAtivo=null;
+    salvarCenarios();
+    saveLS();
+    renderAll();
+    if(modalSector>=0)renderSectorModal();
+    const fora=peso-n;
+    toast(n+' alteraç'+(n===1?'ão aplicada':'ões aplicadas')
+      +(fora>0?' · '+fora+' não coube'+(fora===1?'':'ram')+' nesta base (bricks ou setores diferentes)':''));
+  }catch(err){
+    toast(err&&err.message?err.message:'Não consegui ler o arquivo do cenário');
+  }
+}
+if($('cenFile'))$('cenFile').onchange=e=>{
+  const f=e.target.files[0];
+  e.target.value='';
+  if(f)importarCenarioArquivo(f);
+};
 function salvarComoCenario(){
   if(simVazia()&&!confirm('A simulação está na configuração original, sem alterações. Salvar assim mesmo, como cenário de referência?'))return;
   const sug='Cenário '+(cenarios.length+1);
@@ -3906,7 +4012,17 @@ $('btnExportSet').onclick=async()=>{
     sheets.push({name:'A REALOCAR',xml:sheetXml(rows,[11,34,26,15,30,34,38,38,13,13,13],nC)});
   }
 
+  /* ===================== ABA: CENARIO =====================
+     guarda a simulação inteira em texto para que outra pessoa possa reabrir este mesmo
+     estudo no simulador (Importar cenário), desde que tenha carregado a mesma base. */
+  sheets.push(abaCenario());
+
   /* ===================== empacotar ===================== */
+  await baixarXlsx(sheets,'SETORIZACAO_SIMULADA_AGO26.xlsx');
+  toast('Setorização simulada exportada');
+};
+/* monta o pacote OOXML a partir das abas e devolve o blob do arquivo */
+async function montarXlsx(sheets){
   const zip=new JSZip();
   let ov='',sh='',rel='';
   sheets.forEach((s,i)=>{
@@ -3923,14 +4039,16 @@ $('btnExportSet').onclick=async()=>{
   zip.file('xl/workbook.xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'+sh+'</sheets></workbook>');
   zip.file('xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+rel+'</Relationships>');
   zip.file('xl/styles.xml',stylesXml());
-  const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE'});
+  return zip.generateAsync({type:'blob',compression:'DEFLATE'});
+}
+async function baixarXlsx(sheets,nome){
+  const blob=await montarXlsx(sheets);
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download='SETORIZACAO_SIMULADA_AGO26.xlsx';
+  a.download=nome;
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),4000);
-  toast('Setorização simulada exportada');
-};
+}
 
 /* =================== MAPA INTEGRADO =================== */
 let mapaFrameEl=null,mapaReady=false;
