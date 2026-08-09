@@ -120,9 +120,9 @@ body.mapaFull #mapaStats{display:flex}
 .extchip .pill{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px}
 .extchip .pill.warn{background:rgba(230,140,30,.14);color:#b06a10}
 .extchip .pill.ok{background:rgba(40,160,90,.14);color:var(--pos)}
-.pendprog{display:flex;align-items:center;gap:10px;margin-left:auto;font-size:12px;color:var(--mut)}
+.pendprog{display:flex;align-items:center;gap:10px;margin-left:auto;font-size:11.5px;color:var(--mut);white-space:nowrap}
 .pendprog b{color:var(--alt)}
-.pbar{width:140px;height:6px;border-radius:999px;background:var(--border);overflow:hidden}
+.pbar{width:110px;height:5px;border-radius:999px;background:var(--border);overflow:hidden}
 .pbar i{display:block;height:100%;background:var(--alt);border-radius:999px}
 .exthead{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;background:var(--panel2);padding:11px 16px;border-bottom:1px solid var(--border)}
 .exthead .tname{font-family:'Archivo';font-weight:800;font-size:14px;letter-spacing:.06em;color:var(--mut)}
@@ -130,15 +130,39 @@ body.mapaFull #mapaStats{display:flex}
 .extrow:last-child{border-bottom:0}
 .extrow.dragging{opacity:.45}
 .extrow:hover{background:var(--panel2)}
-.pendband{margin-bottom:30px;border:1px solid var(--alt);border-radius:var(--radius);overflow:hidden;background:var(--panel)}
-.pendhead{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;background:var(--alt-dim);padding:11px 16px;border-bottom:1px solid var(--alt)}
-.pendhead .tname{font-family:'Archivo';font-weight:800;font-size:14px;letter-spacing:.06em;color:var(--alt)}
-.pendgrp{border-bottom:1px solid var(--border)}
-.pendgrp:last-child{border-bottom:0}
-.pendgrp summary{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;list-style:none;font-size:12.5px}
+.pendband{margin-bottom:20px;border:1px solid var(--border2);border-left:3px solid var(--alt);border-radius:var(--radius);overflow:hidden;background:var(--panel)}
+.pendhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel2);padding:6px 12px;cursor:pointer;list-style:none}
+.pendhead::-webkit-details-marker{display:none}
+.pendhead:hover{background:var(--border)}
+.pendhead .tname{font-family:'Archivo';font-weight:800;font-size:11.5px;letter-spacing:.08em;color:var(--alt);white-space:nowrap}
+.pendhead .cv{font-style:normal;font-size:8px;color:var(--mut2);transition:transform .15s}
+.pendband[open] .pendhead .cv{transform:rotate(90deg)}
+.pendsub{color:var(--mut2);font-size:10.5px;line-height:1.3;max-width:420px}
+.pendband[open] .pendsub{display:none}
+.pendlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr))}
+.pendband.dropok{outline:2px dashed var(--alt);outline-offset:3px}
+.pendhead .linkbtn{font-size:11px}
+.pendempty{color:var(--mut2);font-size:11.5px;padding:10px 14px}
+.pendwarn{margin:-14px 0 20px;padding:7px 14px;font-size:11px;color:var(--neg);line-height:1.5;background:var(--panel);border:1px solid var(--border2);border-radius:0 0 var(--radius) var(--radius)}
+.pillok{background:rgba(40,160,90,.14);color:var(--pos);font-size:9.5px;font-weight:700;padding:1px 7px;border-radius:999px;white-space:nowrap}
+.pendgrp.done .pgrow{opacity:.72}
+.pendgrp.done .pgrow:hover{opacity:1;background:var(--panel2)}
+.pendgrp summary.dragging,.pendgrp .pgrow.dragging{opacity:.4}
+.pendgrp summary[draggable],.pendgrp .pgrow[draggable]{cursor:grab}
+.pendgrp{border-top:1px solid var(--border);box-shadow:1px 0 0 var(--border)}
+.pendgrp[open]{grid-column:1/-1;box-shadow:none}
+.pendgrp summary,.pendgrp .pgrow{display:grid;grid-template-columns:8px 44px minmax(96px,1fr) 60px 60px 88px 46px;align-items:center;gap:8px;padding:3px 12px;cursor:pointer;list-style:none;font-size:11.5px;line-height:1.4}
 .pendgrp summary::-webkit-details-marker{display:none}
 .pendgrp summary:hover{background:var(--panel2)}
-.pendgrp summary i{width:8px;height:8px;border-radius:2px;flex:none}
+.pendgrp summary i,.pendgrp .pgrow i{width:6px;height:6px;border-radius:2px;flex:none;justify-self:center}
+.pendgrp.lP .pgrow i{background:var(--prime)}
+.pendgrp.lI .pgrow i{background:var(--inf)}
+.pendgrp .pgnum{color:var(--mut);font-weight:600;font-size:11px}
+.pendgrp .pgname{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pendgrp summary .badge{justify-self:start;font-size:8.5px;padding:0 5px}
+.pendgrp .pgqty{text-align:right;color:var(--mut2);font-size:10.5px;white-space:nowrap}
+.pendgrp .pgval{text-align:right;font-family:'Archivo';font-weight:700;white-space:nowrap}
+.pendgrp .pgevo{text-align:right;font-size:10.5px;white-space:nowrap}
 .pendgrp.lP summary i{background:var(--prime)}
 .pendgrp.lI summary i{background:var(--inf)}
 .pendgrp[open] summary{background:var(--panel2);border-bottom:1px solid var(--border)}
@@ -1957,6 +1981,7 @@ function destOptions(L,excludeIdx){
 }
 let pendSel=new Set();
 let pendOpen=new Set();
+let pendBandOpen=true;
 let pendSort='cidade';   // cidade, brick ou valor
 function setPendSort(k){
   pendSort=k;
@@ -1990,7 +2015,6 @@ function pendMovedCount(){
 }
 function renderPending(pd){
   const pend=cache.pend;
-  if(!pend[0].length&&!pend[1].length){pendSel.clear();return '';}
   // limpar selecao de bricks que ja sairam da lista
   const valid=new Set();
   for(let L=0;L<2;L++)for(const r of pend[L])valid.add(r.b+'|'+L);
@@ -1999,23 +2023,62 @@ function renderPending(pd){
   let vRest=0;
   for(let L=0;L<2;L++)for(const r of pend[L])vRest+=cache.bs.cur[r.b*2+L];
   const moved=pendMovedCount(),tot=moved+nRest,pct=tot?Math.round(moved*100/tot):0;
-  let html='<div class="pendband" id="pendBlock"><div class="pendhead"><span class="tname">BRICKS A REALOCAR</span><span style="color:var(--mut);font-size:11.5px">bricks sem setor na linha (setores desligados no estudo ou convertidos de linha): distribua entre os setores ativos da linha</span>'
-    +`<span class="pendprog"><span><b>${moved}</b> de ${tot} realocados</span><span class="pbar"><i style="width:${pct}%"></i></span><span>faltam <b>${nRest}</b> (${fmtBRL(vRest)})</span></span></div>`;
+  // ---- lista unificada: um item por (setor de origem, linha) ----
+  const items=[];
+  const seen=new Set();
   for(let L=0;L<2;L++){
-    if(!pend[L].length)continue;
-    // agrupar por setor de origem
     const groups=new Map();
     for(const r of pend[L]){
       if(!groups.has(r.orig))groups.set(r.orig,[]);
       groups.get(r.orig).push(r.b);
     }
-    for(const[o,bricks]of[...groups.entries()].sort((a,b)=>(a[0]<0?-1:b[0]<0?1:S.setores[a[0]].num-S.setores[b[0]].num))){
-      const s=o>=0?S.setores[o]:{num:'—',nome:'SEM SETOR NA BASE DE BRICKS'};
-      let gt=0,gr=0;
+    for(const[o,bricks]of groups){
       const rows=ordenaPend(bricks.map(b=>({b,cur:cache.bs.cur[b*2+L],ref:cache.bs.ref[b*2+L]})));
+      let gt=0,gr=0;
       for(const r of rows){gt+=r.cur;gr+=r.ref;}
-      const nSel=rows.filter(r=>pendSel.has(r.b+'|'+L)).length;
+      items.push({o,L,rows,gt,gr,n:rows.length});
+      if(o>=0)seen.add(o);
+    }
+  }
+  // setores encerrados que ja estao com todos os bricks realocados
+  for(const i of (S.extintos||[])){
+    if(seen.has(i))continue;
+    items.push({o:i,L:efLinha(i),rows:[],gt:0,gr:0,n:0});
+  }
+  items.sort((a,b)=>{
+    if((a.n>0)!==(b.n>0))return a.n>0?-1:1;
+    if(a.o<0)return -1;
+    if(b.o<0)return 1;
+    return S.setores[a.o].num-S.setores[b.o].num||a.L-b.L;
+  });
+  const prog=nRest
+    ?`<span class="pendprog"><span><b>${moved}</b> de ${tot} realocados</span><span class="pbar"><i style="width:${pct}%"></i></span><span>faltam <b>${nRest}</b> bricks (${fmtBRL(vRest)})</span></span>`
+    :(tot?'<span class="pendprog"><span class="pillok">todos os bricks realocados</span></span>':'<span class="pendprog"></span>');
+  let html=`<details class="pendband" id="pendBlock" ${pendBandOpen?'open':''} ontoggle="pendBandOpen=this.open" ondragover="dragOverZone(event,this)" ondragleave="dragLeaveZone(event,this)" ondrop="dropDesligar(event,this)"><summary class="pendhead"><i class="cv">&#9654;</i><span class="tname">SETORES ENCERRADOS</span><span class="pendsub">clique para distribuir os bricks; arraste um setor para uma distrital para reativá-lo</span>${prog}`
+    +`<button class="linkbtn" onclick="event.preventDefault();event.stopPropagation();openEncPicker()" title="Procurar um setor pelo número ou nome e marcá-lo como encerrado">+ marcar encerrado</button>`
+    +`<button class="linkbtn" onclick="event.preventDefault();event.stopPropagation();openExtLista()" title="Editar a lista de setores encerrados na reestruturação">editar lista</button></summary>`;
+  if(!items.length){
+    html+='<div class="pendempty">Nenhum setor encerrado. Arraste um setor de qualquer distrital para cá para encerrá-lo.</div>';
+  }else{
+    html+='<div class="pendlist">';
+    for(const it of items){
+      const o=it.o,L=it.L,rows=it.rows;
+      const s=o>=0?S.setores[o]:{num:'—',nome:'SEM SETOR NA BASE DE BRICKS'};
+      const ext=o>=0&&s.extinto;
+      const nome=o>=0?(s.nomeEstudo||s.nome):s.nome;
+      const sim=ext&&!s.extintoBase;
       const gk=o+'_'+L;
+      const tip=`${esc(nome)} (${LNAME[L]})${ext?(sim?' - encerrado na simulação':' - encerrado na reestruturação'):' - convertido de linha'}\n${it.n?it.n+' bricks a realocar: '+fmtBRL(it.gt):'todos os bricks já realocados'}${ext?'\nArraste para uma distrital para reativar':''}`;
+      const head=`<i></i><span class="num pgnum">${s.num}</span>
+        <span class="pgname">${esc(nome)}${sim?' <span class="badge bAlt" title="Encerrado na simulação">sim.</span>':''}</span>
+        <span class="badge ${L===0?'bP':'bI'}">${LNAME[L]}</span>`;
+      const drag=ext?`draggable="true" ondragstart="dragSetor(event,${o})" ondragend="dragEndSetor(event)"`:'';
+      if(!it.n){
+        html+=`<div class="pendgrp done ${L===0?'lP':'lI'}"><div class="pgrow" ${drag} title="${tip}">
+          ${head}<span class="pgqty"><span class="pillok">ok</span></span><span class="pgval"></span><span class="pgevo"></span></div></div>`;
+        continue;
+      }
+      const nSel=rows.filter(r=>pendSel.has(r.b+'|'+L)).length;
       // pista de vizinhanca: quem cobre cada brick na outra linha
       const OL=L===0?1:0;
       const mir=b=>{const sIdx=OL===0?S.bricks[b].sP:S.bricks[b].sI;return sIdx>=0?sIdx:-1;};
@@ -2023,13 +2086,11 @@ function renderPending(pd){
       for(const r of rows){const mi=mir(r.b);const k=mi>=0?mi:-1;mCnt.set(k,(mCnt.get(k)||0)+1);}
       const mSum=[...mCnt.entries()].sort((a,b)=>b[1]-a[1]).slice(0,3)
         .map(([mi,c])=>(mi>=0?S.setores[mi].num+' '+esc((S.setores[mi].nomeEstudo||S.setores[mi].nome).split(' ')[0]):'sem cobertura')+' ('+c+')').join(', ');
-      html+=`<details class="pendgrp ${L===0?'lP':'lI'}" ${pendOpen.has(gk)?'open':''} ontoggle="pendOpenSet('${gk}',this.open)"><summary>
-        <i></i><span class="num" style="color:var(--mut);font-weight:600">${s.num}</span>
-        <span style="font-weight:600">${esc(s.nome)}</span>
-        <span class="badge ${L===0?'bP':'bI'}">${LNAME[L]}</span>
-        <span style="margin-left:auto;color:var(--mut);font-size:12px">${rows.length} bricks</span>
-        <span class="num" style="font-family:'Archivo';font-weight:700">${fmtBRL(gt)}</span>
-        <span style="font-size:11.5px">${evoHtml(gt,gr)}</span></summary>
+      html+=`<details class="pendgrp ${L===0?'lP':'lI'}" ${pendOpen.has(gk)?'open':''} ontoggle="pendOpenSet('${gk}',this.open)"><summary ${drag} title="${tip}">
+        ${head}
+        <span class="pgqty">${rows.length} bricks</span>
+        <span class="num pgval">${fmtBRL(it.gt)}</span>
+        <span class="pgevo">${evoHtml(it.gt,it.gr)}</span></summary>
         <div class="mirhint">Geografia coberta na linha ${LNAME[OL]} por: ${mSum}</div>
         <table class="stbl" style="border-radius:0;border-left:0;border-right:0"><thead><tr>
           <th style="width:26px"><input type="checkbox" ${nSel===rows.length?'checked':''} onclick="event.stopPropagation()" onchange="togglePendGroup(${o},${L},this.checked)"></th>
@@ -2057,8 +2118,11 @@ function renderPending(pd){
           <button class="btn" onclick="movePendGroup(${o},${L},true)">Mover todos</button>
         </div></details>`;
     }
+    html+='</div>';
   }
-  html+='</div>';
+  html+='</details>';
+  const av=extAvisoLinhas();
+  if(av.length)html+=`<div class="pendwarn"><b>${av.length} item(ns) da lista não foram aplicados.</b> ${av.map(esc).join(' · ')} <button class="linkbtn" onclick="openExtLista()">corrigir a lista</button></div>`;
   return html;
 }
 function togglePendSel(b,L,on){
@@ -2101,44 +2165,11 @@ function goPending(){
   document.body.classList.remove('mapaFull');
   document.querySelectorAll('#tabs button').forEach(x=>x.classList.toggle('on',x.dataset.t==='teams'));
   const el=$('pendBlock');
-  if(el)el.scrollIntoView({behavior:'smooth',block:'start'});
-}
-function renderEncerrados(){
-  // valores e contagem de bricks pendentes por setor encerrado
-  const pv=new Map(),pc=new Map();
-  for(let L=0;L<2;L++)for(const r of cache.pend[L]){
-    if(r.orig>=0&&S.setores[r.orig]&&S.setores[r.orig].extinto){
-      pv.set(r.orig,(pv.get(r.orig)||0)+cache.bs.cur[r.b*2+L]);
-      pc.set(r.orig,(pc.get(r.orig)||0)+1);
-    }
-  }
-  let chips='';
-  const ord=(S.extintos||[]).slice().sort((a,b)=>S.setores[a].num-S.setores[b].num);
-  for(const i of ord){
-    const s=S.setores[i];
-    const L=efLinha(i);
-    const n=pc.get(i)||0;
-    const nome=s.nomeEstudo||s.nome;
-    const curto=nome.split(' ').slice(0,2).join(' ');
-    chips+=`<div class="extchip" draggable="true" ondragstart="dragSetor(event,${i})" ondragend="dragEndSetor(event)" title="${esc(nome)} (${LNAME[L]})${s.extintoBase?'':' - encerrado na simulação'}\n${n?n+' bricks a realocar: '+fmtBRL(pv.get(i)||0):'todos os bricks já realocados'}\nArraste para uma equipe para reativar">
-      <i class="${L===0?'cP':'cI'}"></i>
-      <span class="num" style="color:var(--mut);font-weight:600">${s.num}</span>
-      <span style="font-weight:600">${esc(curto)}</span>
-      ${s.extintoBase?(s.extintoLista?'<span class="badge bAlt" title="Encerrado pela lista da reestruturação 2026">2026</span>':''):'<span class="badge bAlt">simulação</span>'}
-      <span class="pill ${n?'warn':'ok'}">${n?n+' bricks':'ok'}</span>
-    </div>`;
-  }
-  return `<div class="extband">
-    <div class="exthead"><span class="tname">SETORES ENCERRADOS</span><span style="color:var(--mut);font-size:11.5px">arraste um chip para uma distrital para reativar o setor; o número no chip indica quantos bricks dele ainda faltam realocar</span>
-      <button class="linkbtn" style="margin-left:auto" onclick="openEncPicker()" title="Procurar um setor pelo número ou nome e marcá-lo como encerrado">+ marcar setor encerrado</button>
-      <button class="linkbtn" onclick="openExtLista()" title="Editar a lista de setores encerrados na reestruturação">editar lista</button></div>
-    ${chips?`<div class="extchips">${chips}</div>`:'<div style="color:var(--mut2);font-size:12.5px;padding:10px 16px">Nenhum setor encerrado. Solte um setor de qualquer equipe aqui para encerrá-lo.</div>'}
-    ${(()=>{const av=extAvisoLinhas();return av.length?`<div style="padding:8px 16px 12px;font-size:11.5px;color:var(--neg);line-height:1.6;border-top:1px solid var(--border)"><b>${av.length} item(ns) da lista não foram aplicados.</b> ${av.map(esc).join(' · ')} <button class="linkbtn" onclick="openExtLista()">corrigir a lista</button></div>`:'';})()}
-  </div>`;
+  if(el){pendBandOpen=true;el.open=true;el.scrollIntoView({behavior:'smooth',block:'start'});}
 }
 function renderTeams(){
   const st=cache.st,pd=cache.bs.pd,stY=cache.stY;
-  let html=renderPending(pd)+renderEncerrados();
+  let html=renderPending(pd);
   html+='<div style="display:flex;align-items:center;gap:12px;margin:0 0 12px">'
     +(S.teams.length>1?'<p style="color:var(--mut2);font-size:11.5px;margin:0;flex:1">Marque os setores na caixa à esquerda e use a barra que aparece no rodapé para movê-los de distrital. Use renomear/excluir no cabeçalho de cada distrital.</p>':'<span style="flex:1"></span>')
     +'<button class="btn primary" onclick="addTeamPrompt()">+ Nova distrital</button></div>';
