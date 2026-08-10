@@ -153,7 +153,8 @@ body.mapaFull #mapaStats{display:flex}
 .pendgrp summary[draggable],.pendgrp .pgrow[draggable]{cursor:grab}
 .pendgrp{border-top:1px solid var(--border);box-shadow:1px 0 0 var(--border)}
 .pendgrp[open]{grid-column:1/-1;box-shadow:none}
-.pendgrp summary,.pendgrp .pgrow{display:grid;grid-template-columns:8px 44px minmax(96px,1fr) 60px 60px 88px 46px;align-items:center;gap:8px;padding:3px 12px;cursor:pointer;list-style:none;font-size:11.5px;line-height:1.4}
+.pendgrp summary,.pendgrp .pgrow{display:grid;grid-template-columns:18px 8px 44px minmax(96px,1fr) 60px 60px 88px 46px;align-items:center;gap:8px;padding:3px 12px;cursor:pointer;list-style:none;font-size:11.5px;line-height:1.4}
+.pendgrp .pgsel{justify-self:center;cursor:pointer;margin:0}
 .pendgrp summary::-webkit-details-marker{display:none}
 .pendgrp summary:hover{background:var(--panel2)}
 .pendgrp summary i,.pendgrp .pgrow i{width:6px;height:6px;border-radius:2px;flex:none;justify-self:center}
@@ -2351,7 +2352,7 @@ function renderPending(pd){
   const prog=nRest
     ?`<span class="pendprog"><span><b>${moved}</b> de ${tot} realocados</span><span class="pbar"><i style="width:${pct}%"></i></span><span>faltam <b>${nRest}</b> bricks (${fmtBRL(vRest)})</span></span>`
     :(tot?'<span class="pendprog"><span class="pillok">todos os bricks realocados</span></span>':'<span class="pendprog"></span>');
-  let html=`<details class="pendband" id="pendBlock" ${pendBandOpen?'open':''} ontoggle="pendBandOpen=this.open" ondragover="dragOverZone(event,this)" ondragleave="dragLeaveZone(event,this)" ondrop="dropDesligar(event,this)"><summary class="pendhead"><i class="cv">&#9654;</i><span class="tname">SETORES ENCERRADOS</span><span class="pendsub">clique para distribuir os bricks; arraste um setor para uma distrital para reativá-lo</span>${prog}`
+  let html=`<details class="pendband" id="pendBlock" ${pendBandOpen?'open':''} ontoggle="pendBandOpen=this.open" ondragover="dragOverZone(event,this)" ondragleave="dragLeaveZone(event,this)" ondrop="dropDesligar(event,this)"><summary class="pendhead"><i class="cv">&#9654;</i><span class="tname">SETORES ENCERRADOS</span><span class="pendsub">clique para distribuir os bricks; marque os setores para reativá-los em lote numa distrital</span>${prog}`
     +`<button class="linkbtn" onclick="event.preventDefault();event.stopPropagation();openEncPicker()" title="Procurar um setor pelo número ou nome e marcá-lo como encerrado">+ marcar encerrado</button>`
     +`<button class="linkbtn" onclick="event.preventDefault();event.stopPropagation();openExtLista()" title="Editar a lista de setores encerrados na reestruturação">editar lista</button></summary>`;
   if(!items.length){
@@ -2366,8 +2367,14 @@ function renderPending(pd){
       const nome=o>=0?(s.nomeEstudo||s.nome):s.nome;
       const sim=ext&&!s.extintoBase;
       const gk=o+'_'+L;
-      const tip=`${esc(nome)} (${LNAME[L]})${ext?(sim?' - encerrado na simulação':' - encerrado na reestruturação'):' - convertido de linha'}\n${it.n?it.n+' bricks a realocar: '+fmtBRL(it.gt):'todos os bricks já realocados'}${ext?'\nArraste para uma distrital para reativar':''}`;
-      const head=`<i></i><span class="num pgnum">${s.num}</span>
+      const tip=`${esc(nome)} (${LNAME[L]})${ext?(sim?' - encerrado na simulação':' - encerrado na reestruturação'):' - convertido de linha'}\n${it.n?it.n+' bricks a realocar: '+fmtBRL(it.gt):'todos os bricks já realocados'}${ext?'\nMarque a caixa para reativar em lote, ou arraste para uma distrital':''}`;
+      // caixa de selecao: alimenta a mesma barra de lote usada nas distritais
+      const selBox=ext
+        ? `<input type="checkbox" class="pgsel" ${setSel.has(o)?'checked':''} title="Selecionar para reativar numa distrital"
+             onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" ondragstart="event.stopPropagation()"
+             onchange="event.stopPropagation();toggleSetorSel(${o},this.checked)">`
+        : '<span></span>';
+      const head=`${selBox}<i></i><span class="num pgnum">${s.num}</span>
         <span class="pgname">${esc(nome)}${sim?' <span class="badge bAlt" title="Encerrado na simulação">sim.</span>':''}</span>
         <span class="badge ${L===0?'bP':'bI'}">${LNAME[L]}</span>`;
       const drag=ext?`draggable="true" ondragstart="dragSetor(event,${o})" ondragend="dragEndSetor(event)"`:'';
@@ -2552,10 +2559,13 @@ function renderSelBar(){
   const prev=(document.getElementById('selBarDest')||{}).value||'';
   const opts=S.teams.map(t=>`<option value="${esc(t.name)}" ${t.name===prev?'selected':''}>${esc(t.name)}</option>`).join('');
   const p=setSel.size>1;
-  bar.innerHTML=`<span class="cnt"><b>${setSel.size}</b> setor${p?'es':''} selecionado${p?'s':''}</span>
-    <select id="selBarDest"><option value="">Mover para distrital...</option>${opts}</select>
-    <button class="btn primary" onclick="moveSetoresSel()">Mover selecionados</button>
-    <button class="linkbtn warn" onclick="encerrarSetoresSel()">encerrar</button>
+  // selecao so de encerrados: a acao e reativar, e nao faz sentido oferecer encerrar
+  const nEnc=[...setSel].filter(i=>S.setores[i]&&S.setores[i].extinto).length;
+  const soEnc=nEnc===setSel.size;
+  bar.innerHTML=`<span class="cnt"><b>${setSel.size}</b> setor${p?'es':''} ${soEnc?('encerrado'+(p?'s':'')+' '):''}selecionado${p?'s':''}</span>
+    <select id="selBarDest"><option value="">${soEnc?'Reativar na distrital...':'Mover para distrital...'}</option>${opts}</select>
+    <button class="btn primary" onclick="moveSetoresSel()">${soEnc?('Reativar selecionado'+(p?'s':'')):'Mover selecionados'}</button>
+    ${soEnc?'':'<button class="linkbtn warn" onclick="encerrarSetoresSel()">encerrar</button>'}
     <button class="linkbtn" onclick="clearSetorSel()">limpar seleção</button>`;
 }
 function encerrarSetoresSel(){
@@ -2579,24 +2589,26 @@ function moveSetoresSel(){
   const name=sel?sel.value:'';
   if(!name){toast('Escolha a distrital de destino');return;}
   if(!setSel.size){toast('Selecione ao menos um setor');return;}
-  let n=0;
+  let n=0,nRe=0;
   for(const i of setSel){
     const s=S.setores[i];
     const cur=(S.teams.find(t=>t.sIdxs.includes(i))||{}).name;
     if(cur===name)continue;
+    const eraEnc=!!s.extinto;
     if(s.extintoBase){S.reativOv.set(i,name);}
     else{
       S.desligOv.delete(i);
       if(s.teamOrig===name)S.teamOv.delete(i);
       else S.teamOv.set(i,name);
     }
-    n++;
+    n++;if(eraEnc)nRe++;
   }
   setSel.clear();
   applyTeamOv();
   renderAll();
   if(modalSector>=0)renderSectorModal();
-  toast(n?n+' setor'+(n>1?'es movidos':' movido')+' para '+name:'Os setores selecionados já estavam nessa distrital');
+  const verbo=nRe===n?('reativado'+(n>1?'s':'')+' em '):('movido'+(n>1?'s':'')+' para ');
+  toast(n?n+' setor'+(n>1?'es ':' ')+verbo+name:'Os setores selecionados já estavam nessa distrital');
 }
 // ordenacao da tabela de marcas (clique no cabecalho)
 let marcaSort={k:'cur',d:-1};
