@@ -4570,8 +4570,8 @@ function brickStatus(b,L){
    SETOR NOVO e OBSERVAÇÕES, na mesma ordem do arquivo (setor antigo crescente e, dentro
    dele, codigo do brick). SETOR NOVO so e preenchido onde a simulacao trocou o dono do
    brick, com numero e nome completo do setor de destino; onde nada mudou a celula fica
-   vazia, igual ao arquivo de origem. O nome da aba vai sem a barra porque o Excel nao
-   aceita "/" em nome de aba. */
+   vazia, igual ao arquivo de origem. E a primeira aba do arquivo. O nome usa underline
+   porque o Excel nao aceita "/" em nome de aba. */
 function abaDePara(){
   const head=['LINHA','BRICK','SETOR ANTIGO','SETOR NOVO','OBSERVAÇÕES'];
   const rows=[head.map(h=>cS(h,XS.hdr))];
@@ -4606,7 +4606,7 @@ function abaDePara(){
     rows.push([cT(LNAME[L],tone),cT(S.bricks[b].name,tone),cT(sLbl(st.orig),tone),
       cT(mudou?sLbl(st.eff):'',tone),cT(obs,tone)]);
   }
-  return{name:'DE PARA',xml:sheetXml(rows,[11,46,32,32,26],head.length)};
+  return{name:'DE_PARA',xml:sheetXml(rows,[11,46,32,32,26],head.length)};
 }
 $('btnExportSet').onclick=async()=>{
   if(typeof JSZip==='undefined'){toast('Biblioteca de exportação ainda carregando, tente novamente');return;}
@@ -4694,7 +4694,10 @@ async function exportarSetorizacao(){
 
   const sheets=[];
 
-  /* ===================== ABA 1: SETORIZACAO SIMULADA ===================== */
+  /* ===================== ABA 1: DE_PARA ===================== */
+  sheets.push(abaDePara());
+
+  /* ===================== ABA 2: SETORIZACAO SIMULADA ===================== */
   {
     const head=['SETOR ESPELHO','REGIONAL','SETOR ANTIGO','SETOR NOVO','PLACA','VEÍCULO','NOME','Observação','DATA ADMISSÃO','LINHA ATUAL','STATUS','DDD','TELEFONE',
       'SITUAÇÃO NA SIMULAÇÃO','EQUIPE ORIGINAL','BRICKS','BRICKS RECEBIDOS','BRICKS CEDIDOS','MÉDIA MÊS','YTD 26','EVOL YTD',mesLbl,'EVOL MÊS','NOVA SEDE'];
@@ -4776,7 +4779,7 @@ async function exportarSetorizacao(){
       [13,9,12,11,10,24,34,44,14,15,8,6,12,26,14,8,10,10,13,14,10,13,10,110],nC)});
   }
 
-  /* ===================== ABA 2: IMPACTO POR SETOR ===================== */
+  /* ===================== ABA 3: IMPACTO POR SETOR ===================== */
   {
     const head=['EQUIPE','SETOR','NOME','LINHA','LINHA ORIGINAL','SITUAÇÃO','BRICKS ANTES','BRICKS DEPOIS','DIF BRICKS',
       'YTD ANTES','YTD DEPOIS','DIF YTD','% DIF YTD','MÉDIA MÊS DEPOIS','ABAIXO DO PISO',mesLbl+' ANTES',mesLbl+' DEPOIS','DIF MÊS',
@@ -4848,7 +4851,7 @@ async function exportarSetorizacao(){
       [10,9,32,11,15,34,13,14,11,13,13,13,12,15,15,14,14,13,10,17,34,15],nC)});
   }
 
-  /* ===================== ABA 3: BRICKS (configuracao nova) ===================== */
+  /* ===================== ABA 4: BRICKS (configuracao nova) ===================== */
   {
     const head=['LINHA','BRICK','CIDADE','SITUAÇÃO','SETOR ORIGEM','NOME ORIGEM','EQUIPE ORIGEM','SETOR DESTINO','NOME DESTINO','EQUIPE DESTINO',
       mesLbl,'TRI','YTD 26','MAT','MÉDIA MÊS'];
@@ -4884,7 +4887,7 @@ async function exportarSetorizacao(){
     sheets.push({name:'BRICKS',xml:sheetXml(rows,[11,34,26,28,13,30,14,14,30,15,13,13,13,13,13],nC)});
   }
 
-  /* ===================== ABA 4: ALTERACOES ===================== */
+  /* ===================== ABA 5: ALTERACOES ===================== */
   {
     const head=['TIPO','ITEM','LINHA','DE','PARA','CIDADE',mesLbl,'YTD 26','OBSERVAÇÃO'];
     const nC=head.length;
@@ -4938,7 +4941,7 @@ async function exportarSetorizacao(){
     sheets.push({name:'ALTERACOES',xml:sheetXml(rows,[18,34,11,38,38,26,13,13,42],nC)});
   }
 
-  /* ===================== ABA 5: A REALOCAR ===================== */
+  /* ===================== ABA 6: A REALOCAR ===================== */
   {
     const head=['LINHA','BRICK','CIDADE','SETOR DE ORIGEM','NOME ORIGEM','MOTIVO','SUGESTÃO PELA CIDADE','SUGESTÃO PELO ESPELHO',mesLbl,'YTD 26','MÉDIA MÊS'];
     const nC=head.length;
@@ -4969,9 +4972,6 @@ async function exportarSetorizacao(){
     }
     sheets.push({name:'A REALOCAR',xml:sheetXml(rows,[11,34,26,15,30,34,38,38,13,13,13],nC)});
   }
-
-  /* ===================== ABA 6: DE PARA ===================== */
-  sheets.push(abaDePara());
 
   /* ===================== ABA: CENARIO =====================
      guarda a simulação inteira em texto para que outra pessoa possa reabrir este mesmo
