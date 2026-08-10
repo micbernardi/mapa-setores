@@ -764,6 +764,7 @@ $('fileBase').onchange=e=>{
   checkReady();
 };
 function checkReady(){$('btnProcess').disabled=!(S.filesBase&&S.filesBase.length);}
+function mostrarNotaRestauracao(){
 try{
   const saved=JSON.parse(localStorage.getItem(LS_KEY)||'null');
   if(saved&&((saved.mb&&saved.mb.length)||(saved.mo&&saved.mo.length)||(saved.mx&&saved.mx.length)||(saved.sl&&saved.sl.length)||(saved.tv&&saved.tv.length)||(saved.rv&&saved.rv.length)||(saved.dg&&saved.dg.length)||(saved.tn&&saved.tn.length)||(saved.ta&&saved.ta.length)||(saved.td&&saved.td.length))){
@@ -771,6 +772,7 @@ try{
     $('restoreNote').textContent='Existe uma simulação salva neste navegador ('+(saved.mb?saved.mb.length:0)+' bricks movidos, '+(saved.mo?saved.mo.length:0)+' marcas trocadas, '+(saved.mx?saved.mx.length:0)+' marcas excluídas). Ela será reaplicada após o processamento.';
   }
 }catch(e){}
+}
 
 $('btnProcess').onclick=async()=>{
   $('btnProcess').disabled=true;
@@ -2675,8 +2677,11 @@ function setMarcaSort(k){
   else marcaSort={k,d:MSORT_ASC.includes(k)?1:-1};
   renderMarcas();
 }
-// marcas excluidas por padrao da simulacao: entram so se o usuario ligar na aba de marcas
-const DEFAULT_OFF=['NIMEGON','NIMEGON MET','HIXIZINE','PEN-VE-ORAL','BENZETACIL'];
+/* nenhuma marca sai da simulacao por padrao: toda a venda da base entra nos totais e a
+   exclusao passa a ser sempre manual, pelo botao "excluir" na aba Marcas por linha.
+   se algum dia voltar a fazer sentido tirar alguma marca de saida de fabrica, basta
+   colocar o nome aqui que ela volta a nascer excluida. */
+const DEFAULT_OFF=[];
 /* chave tolerante: ignora acento, caixa, hifen, ponto e espaco, para que "PEN-VE-ORAL",
    "PEN VE ORAL" e "PENVEORAL" caiam na mesma marca */
 function offKey(s){return normTxt(s).replace(/[^A-Z0-9]/g,'');}
@@ -2687,6 +2692,37 @@ function applyDefaultOff(){
     // casa o nome exato e tambem as apresentacoes ("BENZETACIL 1.200.000", "PEN VE ORAL 500")
     if(alvos.some(a=>a&&(base===a||base.startsWith(a))))S.marcaOff.add(m);
   });
+}
+/* ate a versao anterior estas marcas nasciam excluidas e a exclusao acabava gravada no
+   navegador (simulacao em andamento e cenarios salvos). como agora nada sai por padrao,
+   essas exclusoes antigas sao apagadas uma unica vez, senao elas voltariam sozinhas a cada
+   carregamento. exclusoes feitas por voce depois desta limpeza continuam valendo normal. */
+const LS_MIGOFF='simulador_setorizacao_migr_marcas_off';
+const LEGADO_OFF=['NIMEGON','NIMEGON MET','HIXIZINE','PEN-VE-ORAL','BENZETACIL'];
+function migrarMarcasOff(){
+  try{
+    if(localStorage.getItem(LS_MIGOFF)==='1')return;
+    const alvos=LEGADO_OFF.map(offKey);
+    const legado=n=>{
+      const base=offKey(String(n).replace(/\s*\(.*\)$/,''));
+      return alvos.some(a=>a&&(base===a||base.startsWith(a)));
+    };
+    const limpar=d=>{
+      if(!d||!Array.isArray(d.mx))return false;
+      const antes=d.mx.length;
+      d.mx=d.mx.filter(n=>!legado(n));
+      return d.mx.length!==antes;
+    };
+    const raw=JSON.parse(localStorage.getItem(LS_KEY)||'null');
+    if(limpar(raw))localStorage.setItem(LS_KEY,JSON.stringify(raw));
+    const cen=JSON.parse(localStorage.getItem(LS_CEN)||'null');
+    if(cen&&Array.isArray(cen.itens)){
+      let mudou=false;
+      for(const c of cen.itens)if(c&&limpar(c.dados))mudou=true;
+      if(mudou)localStorage.setItem(LS_CEN,JSON.stringify(cen));
+    }
+    localStorage.setItem(LS_MIGOFF,'1');
+  }catch(e){}
 }
 function toggleMarcaOff(m){
   if(S.marcaOff.has(m)){
@@ -4364,7 +4400,9 @@ function excluirCenario(id){
   renderCenarios();
   toast('Cenário "'+c.nome+'" excluído');
 }
+migrarMarcasOff();
 carregarCenarios();
+mostrarNotaRestauracao();
 
 /* ---------- export setorizacao (formato do estudo, sem numeros de resultado) ---------- */
 function xesc(t){return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -4526,6 +4564,49 @@ function brickStatus(b,L){
   if(orig<0)return{st:'ATRIBUIDO',orig,eff,tone:3};
   if(S.setores[orig]&&S.setores[orig].extinto)return{st:'REALOCADO DE SETOR ENCERRADO',orig,eff,tone:3};
   return{st:'MOVIDO',orig,eff,tone:1};
+}
+/* ---------- aba DE/PARA ----------
+   Mesmo desenho da aba "BRICKs 2026" da base de bricks: LINHA, BRICK, SETOR ANTIGO,
+   SETOR NOVO e OBSERVAÇÕES, na mesma ordem do arquivo (setor antigo crescente e, dentro
+   dele, codigo do brick). SETOR NOVO so e preenchido onde a simulacao trocou o dono do
+   brick, com numero e nome completo do setor de destino; onde nada mudou a celula fica
+   vazia, igual ao arquivo de origem. O nome da aba vai sem a barra porque o Excel nao
+   aceita "/" em nome de aba. */
+function abaDePara(){
+  const head=['LINHA','BRICK','SETOR ANTIGO','SETOR NOVO','OBSERVAÇÕES'];
+  const rows=[head.map(h=>cS(h,XS.hdr))];
+  const numDe=i=>(i>=0&&S.setores[i])?(S.setores[i].num||0):0;
+  const codDe=b=>{const m=String((S.bricks[b]&&S.bricks[b].name)||'').match(/^\s*0*(\d+)/);
+    return m?parseInt(m[1],10):Number.MAX_SAFE_INTEGER;};
+  /* quando a base de bricks foi carregada, a aba sai exatamente na ordem das linhas dela;
+     o que nao veio do arquivo entra depois, por setor antigo e codigo do brick */
+  const ordArq=new Map();
+  ((S.study&&S.study.brickAlloc)||[]).forEach((a,i)=>{
+    const k=(a.L===0?0:1)+'|'+parseInt(a.code,10);
+    if(!ordArq.has(k))ordArq.set(k,i);
+  });
+  const itens=[];
+  for(let L=0;L<2;L++)for(let b=0;b<S.bricks.length;b++){
+    const st=brickStatus(b,L);
+    if(st.orig<0&&st.eff<0)continue;               // brick que nao pertence a esta linha
+    const cod=codDe(b),k=L+'|'+cod;
+    itens.push({b,L,st,mudou:st.eff>=0&&st.eff!==st.orig,
+      ord0:ordArq.has(k)?ordArq.get(k):Number.MAX_SAFE_INTEGER,
+      // quem nao tinha setor antigo nao existia no arquivo original: vai para o fim
+      ord1:st.orig>=0?numDe(st.orig):1e9+numDe(st.eff),ord2:cod});
+  }
+  itens.sort((x,y)=>x.ord0-y.ord0||x.ord1-y.ord1||x.ord2-y.ord2||x.L-y.L);
+  for(const it of itens){
+    const{b,L,st,mudou}=it;
+    let obs='';
+    if(st.eff<0)obs='BRICK A REALOCAR';
+    else if(st.orig<0)obs='SEM SETOR ANTIGO NA BASE';
+    else if(mudou&&S.setores[st.orig]&&S.setores[st.orig].extinto)obs='SETOR ANTIGO ENCERRADO';
+    const tone=st.eff<0?2:(mudou?(st.orig<0?3:1):0);
+    rows.push([cT(LNAME[L],tone),cT(S.bricks[b].name,tone),cT(sLbl(st.orig),tone),
+      cT(mudou?sLbl(st.eff):'',tone),cT(obs,tone)]);
+  }
+  return{name:'DE PARA',xml:sheetXml(rows,[11,46,32,32,26],head.length)};
 }
 $('btnExportSet').onclick=async()=>{
   if(typeof JSZip==='undefined'){toast('Biblioteca de exportação ainda carregando, tente novamente');return;}
@@ -4888,6 +4969,9 @@ async function exportarSetorizacao(){
     }
     sheets.push({name:'A REALOCAR',xml:sheetXml(rows,[11,34,26,15,30,34,38,38,13,13,13],nC)});
   }
+
+  /* ===================== ABA 6: DE PARA ===================== */
+  sheets.push(abaDePara());
 
   /* ===================== ABA: CENARIO =====================
      guarda a simulação inteira em texto para que outra pessoa possa reabrir este mesmo
