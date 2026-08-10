@@ -2497,7 +2497,7 @@ function renderTeams(){
           ${conv?`<span class="badge bAlt">convertido para ${LNAME[L]}</span>`:''}
           ${S.reativOv.has(i)?'<span class="badge bAlt" title="Setor encerrado no estudo, reativado na simulação">reativado</span>':''}
           ${S.teamOv.has(i)?`<span class="badge bAlt" title="Movido de ${esc(S.setores[i].teamOrig||'')}">de ${esc(S.setores[i].teamOrig||'')}</span>`:''}
-          ${nConf?`<span class="badge bZero">${nConf} conflito${nConf>1?'s':''}</span>`:''}
+          ${nConf?`<span class="badge bZero" title="${esc(conflitoResumo(i))}">${nConf} conflito${nConf>1?'s':''}</span>`:''}
           ${t.recv||t.lost?`<span class="badge bAlt">${t.recv?'+'+t.recv:''}${t.recv&&t.lost?' ':''}${t.lost?'-'+t.lost:''}</span>`:''}
           ${s.semVendas?'<span class="badge bZero">sem vendas</span>':''}
           <button class="mapbtn" title="Ver este setor no mapa" onclick="event.stopPropagation();verSetorNoMapa(${i})">ver no mapa</button></td>
@@ -2720,6 +2720,20 @@ function sectorConflicts(sIdx){
     if(base>=0&&base!==sIdx&&!S.setores[base].extinto&&efLinha(base)===L)out.push({b,other:base});
   }
   return out;
+}
+/* de quem sao os bricks que este setor convertido tomou, para o balao do aviso mostrar
+   exatamente quais setores o simulador ainda considera em conflito */
+function conflitoResumo(sIdx){
+  const cnt=new Map();
+  for(const c of sectorConflicts(sIdx))cnt.set(c.other,(cnt.get(c.other)||0)+1);
+  if(!cnt.size)return '';
+  const l=[...cnt].sort((a,b)=>b[1]-a[1]).map(([j,n])=>{
+    const s=S.setores[j];
+    return s.num+' '+(s.nomeEstudo||s.nome)+': '+n+' brick'+(n>1?'s':'');
+  });
+  return 'Bricks tomados de outro setor da mesma linha:\n'+l.join('\n')
+    +'\n\nO aviso some quando esses bricks voltarem, quando forem para outro setor,'
+    +'\nou quando o setor de origem for convertido ou encerrado.';
 }
 function convertSector(sIdx){
   const L=efLinha(sIdx),L2=1-L;
@@ -4515,8 +4529,18 @@ function brickStatus(b,L){
 }
 $('btnExportSet').onclick=async()=>{
   if(typeof JSZip==='undefined'){toast('Biblioteca de exportação ainda carregando, tente novamente');return;}
+  if(!S.setores||!S.setores.length){toast('Carregue a base de vendas antes de exportar');return;}
   toast('Gerando setorização simulada...');
   await new Promise(r=>setTimeout(r,30));
+  try{
+    await exportarSetorizacao();
+  }catch(err){
+    console.error('Exportar setorização:',err);
+    toast('Não consegui exportar: '+(err&&err.message?err.message:err));
+  }
+};
+/* separado do botao para o erro subir com mensagem em vez de morrer calado no console */
+async function exportarSetorizacao(){
 
   const bsM=computeBrickSums('mes'),bsT=computeBrickSums('tri'),bsY=computeBrickSums('ytd'),bsA=computeBrickSums('mat');
   const stM=computeSectorTotals(bsM),stY=computeSectorTotals(bsY);
@@ -4873,7 +4897,7 @@ $('btnExportSet').onclick=async()=>{
   /* ===================== empacotar ===================== */
   await baixarXlsx(sheets,'SETORIZACAO_SIMULADA_AGO26.xlsx');
   toast('Setorização simulada exportada');
-};
+}
 /* monta o pacote OOXML a partir das abas e devolve o blob do arquivo */
 async function montarXlsx(sheets){
   const zip=new JSZip();
