@@ -348,13 +348,6 @@ body.mapaFull #cenBar{display:none}
       <input type="file" id="fileBase" accept=".xlsx" hidden>
     </div>
   </div>
-  <div class="upcard" id="cardMapa" style="margin-top:14px">
-    <div class="step">Atalho</div>
-    <h3>Só olhar no mapa</h3>
-    <p>Já tem uma setorização exportada? Selecione o arquivo aqui e o mapa abre direto, sem precisar da base de vendas. Serve para qualquer arquivo com a aba BRICKS, inclusive os exportados por este simulador.</p>
-    <div class="fname" id="fnMapa"></div>
-    <input type="file" id="fileMapa" accept=".xlsx" hidden>
-  </div>
   <button id="btnProcess" disabled>Processar arquivos</button>
   <div id="progWrap">
     <div id="progBar"><div id="progFill"></div></div>
@@ -764,41 +757,6 @@ $('fileBase').onchange=e=>{
   checkReady();
 };
 function checkReady(){$('btnProcess').disabled=!S.filesBase;}
-/* ---------- atalho: abrir so o mapa a partir de uma setorizacao ja exportada ----------
-   o mapa precisa apenas da aba BRICKS (linha, cidade, setor destino e YTD). a base de
-   vendas so e necessaria para simular, entao para consultar no mapa ela e dispensavel. */
-$('cardMapa').onclick=()=>$('fileMapa').click();
-$('fileMapa').onchange=async e=>{
-  const f=e.target.files[0];
-  if(!f)return;
-  $('fnMapa').textContent='Lendo '+f.name+'...';
-  try{
-    const wb=XLSX.read(await f.arrayBuffer(),{type:'array'});
-    const aba=wb.SheetNames.find(n=>normTxt(n).includes('BRICK'));
-    if(!aba)throw new Error('Não achei a aba BRICKS neste arquivo. Abas encontradas: '+wb.SheetNames.join(', '));
-    const rows=XLSX.utils.sheet_to_json(wb.Sheets[aba],{header:1,defval:null});
-    const head=(rows[0]||[]).map(h=>normTxt(h));
-    const falta=[];
-    for(const c of['LINHA','CIDADE','SETOR DESTINO'])if(!head.includes(c))falta.push(c);
-    if(!head.includes('YTD 26')&&!head.includes('YTD'))falta.push('YTD 26');
-    if(falta.length)throw new Error('A aba '+aba+' não tem a(s) coluna(s): '+falta.join(', '));
-    if(rows.length<2)throw new Error('A aba '+aba+' está vazia.');
-    S.mapaRows=rows;S.mapaLabel=f.name;
-    $('fnMapa').textContent=f.name+' · '+(rows.length-1)+' linhas';
-    abrirSoMapa();
-  }catch(err){
-    $('fnMapa').textContent='';
-    e.target.value='';
-    toast(err&&err.message?err.message:'Não consegui ler o arquivo');
-  }
-};
-function abrirSoMapa(){
-  document.body.classList.add('somapa');
-  $('uploadScreen').style.display='none';
-  $('app').style.display='block';
-  const b=document.querySelector('#tabs button[data-t="mapa"]');
-  if(b)b.click();
-}
 try{
   const saved=JSON.parse(localStorage.getItem(LS_KEY)||'null');
   if(saved&&((saved.mb&&saved.mb.length)||(saved.mo&&saved.mo.length)||(saved.mx&&saved.mx.length)||(saved.sl&&saved.sl.length)||(saved.tv&&saved.tv.length)||(saved.rv&&saved.rv.length)||(saved.dg&&saved.dg.length)||(saved.tn&&saved.tn.length)||(saved.ta&&saved.ta.length)||(saved.td&&saved.td.length))){
@@ -905,8 +863,6 @@ $('btnNewFiles').onclick=async()=>{
   $('uploadScreen').style.display='block';
   document.body.classList.remove('somapa','mapaFull');
   S.mapaRows=null;S.mapaLabel='';
-  $('fnMapa').textContent='';
-  $('fileMapa').value='';
 };
 function setProg(pct,txt){
   $('progFill').style.width=pct+'%';
