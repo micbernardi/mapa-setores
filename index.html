@@ -88,9 +88,11 @@ input,select{font-family:inherit}
 .chgchip{display:inline-block;background:var(--alt-dim);border:1px solid var(--alt);color:var(--alt);border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600;cursor:pointer;margin-left:8px}
 
 /* ---------- tabs ---------- */
-#tabs{max-width:1500px;margin:16px auto 0;padding:0 20px;display:flex;gap:4px;border-bottom:1px solid var(--border)}
-#tabs button{background:transparent;border:0;color:var(--mut);padding:10px 18px;font-size:13px;font-weight:600;border-bottom:2px solid transparent;margin-bottom:-1px}
-#tabs button.on{color:var(--txt);border-bottom-color:var(--txt)}
+#tabs{max-width:1500px;margin:16px auto 0;padding:0 20px;display:flex;align-items:flex-end;gap:6px;border-bottom:2px solid var(--border2)}
+#tabs button{background:var(--panel2);border:1px solid var(--border);border-bottom:3px solid transparent;color:var(--mut);padding:11px 22px;font-size:13.5px;font-weight:600;border-radius:9px 9px 0 0;margin-bottom:-2px;transition:background .15s,color .15s,border-color .15s}
+#tabs button:hover{background:var(--panel);color:var(--txt)}
+#tabs button.on{background:#fff;color:var(--txt);border-color:var(--border2);border-bottom-color:var(--txt);font-weight:700;box-shadow:0 -1px 3px rgba(38,50,60,.07)}
+#tabs button:focus-visible{outline:2px solid var(--inf);outline-offset:-2px}
 body.somapa #periodSeg,body.somapa #searchWrap,body.somapa #btnChanges,
 body.somapa #btnExportSet,body.somapa #btnReset,
 body.somapa #tabs button[data-t="teams"],body.somapa #tabs button[data-t="marcas"]{display:none}
