@@ -2679,20 +2679,35 @@ function setMarcaSort(k){
   else marcaSort={k,d:MSORT_ASC.includes(k)?1:-1};
   renderMarcas();
 }
-/* nenhuma marca sai da simulacao por padrao: toda a venda da base entra nos totais e a
-   exclusao passa a ser sempre manual, pelo botao "excluir" na aba Marcas por linha.
-   se algum dia voltar a fazer sentido tirar alguma marca de saida de fabrica, basta
-   colocar o nome aqui que ela volta a nascer excluida. */
-const DEFAULT_OFF=[];
+/* marcas que nascem fora da simulacao: a venda delas nao entra em nenhum total ate voce
+   clicar em "restaurar" na aba Marcas por linha. Esse clique vale para sempre: a marca
+   volta a contar tambem nos carregamentos seguintes e em qualquer cenario, ate voce
+   excluir de novo ou resetar a simulacao. */
+const DEFAULT_OFF=['HIXIZINE'];
+/* quais entradas de DEFAULT_OFF voce religou. Fica num registro proprio do navegador, e
+   nao dentro da simulacao salva, porque e uma preferencia sua e nao uma alteracao de
+   setorizacao: vale para todos os cenarios e nao viaja no arquivo exportado. */
+const LS_DEFON='simulador_setorizacao_marcas_padrao_ligadas';
+let defaultOn=new Set();
+try{const r=JSON.parse(localStorage.getItem(LS_DEFON)||'null');if(Array.isArray(r))defaultOn=new Set(r);}catch(e){}
+function salvarDefaultOn(){try{localStorage.setItem(LS_DEFON,JSON.stringify([...defaultOn]));}catch(e){}}
 /* chave tolerante: ignora acento, caixa, hifen, ponto e espaco, para que "PEN-VE-ORAL",
    "PEN VE ORAL" e "PENVEORAL" caiam na mesma marca */
 function offKey(s){return normTxt(s).replace(/[^A-Z0-9]/g,'');}
+/* qual entrada de DEFAULT_OFF casa com esta marca, se alguma. Casa o nome exato e tambem
+   as apresentacoes ("HIXIZINE XAROPE", "BENZETACIL 1.200.000") */
+function defaultOffAlvo(nome){
+  const base=offKey(String(nome||'').replace(/\s*\(.*\)$/,''));
+  for(const a of DEFAULT_OFF){
+    const k=offKey(a);
+    if(k&&(base===k||base.startsWith(k)))return k;
+  }
+  return null;
+}
 function applyDefaultOff(){
-  const alvos=DEFAULT_OFF.map(offKey);
   S.marcas.forEach((mc,m)=>{
-    const base=offKey(String(mc.name).replace(/\s*\(.*\)$/,''));
-    // casa o nome exato e tambem as apresentacoes ("BENZETACIL 1.200.000", "PEN VE ORAL 500")
-    if(alvos.some(a=>a&&(base===a||base.startsWith(a))))S.marcaOff.add(m);
+    const a=defaultOffAlvo(mc.name);
+    if(a&&!defaultOn.has(a))S.marcaOff.add(m);
   });
 }
 /* ate a versao anterior estas marcas nasciam excluidas e a exclusao acabava gravada no
@@ -2727,11 +2742,21 @@ function migrarMarcasOff(){
   }catch(e){}
 }
 function toggleMarcaOff(m){
+  /* marca da lista padrao: o clique tambem grava a preferencia, senao a exclusao padrao
+     voltaria por cima dela no proximo carregamento */
+  const alvo=defaultOffAlvo(S.marcas[m].name);
   if(S.marcaOff.has(m)){
     S.marcaOff.delete(m);
+    if(alvo&&!defaultOn.has(alvo)){defaultOn.add(alvo);salvarDefaultOn();}
     toast('Marca '+S.marcas[m].name+' restaurada na simulação');
   }else{
     S.marcaOff.add(m);
+    if(alvo&&defaultOn.has(alvo)){
+      // so volta a valer a exclusao padrao quando nenhuma apresentacao da marca
+      // continuar contando; excluir uma so nao derruba a preferencia das outras
+      const algumaDentro=S.marcas.some((mc,i)=>defaultOffAlvo(mc.name)===alvo&&!S.marcaOff.has(i));
+      if(!algumaDentro){defaultOn.delete(alvo);salvarDefaultOn();}
+    }
     toast('Marca '+S.marcas[m].name+' excluída da simulação');
   }
   renderAll();
@@ -4016,6 +4041,9 @@ $('btnWipe').onclick=limparTudo;
 $('btnReset').onclick=()=>{
   if(simVazia()&&!S.marcaOff.size){toast('Nenhuma alteração para resetar');return;}
   if(!confirm('Descartar todas as alterações da simulação?'))return;
+  // resetar volta a base ao estado original, inclusive as marcas da lista padrao que
+  // voce tinha religado
+  if(defaultOn.size){defaultOn.clear();salvarDefaultOn();}
   limparSimulacao();
   localStorage.removeItem(LS_KEY);
   cenAtivo=null;salvarCenarios();
@@ -4170,6 +4198,9 @@ function applySnapshot(saved,silent){
       S.marcaOff.add(m);n++;
     }
   }
+  // o snapshot reescreve a lista de excluidas, entao a exclusao padrao volta por cima:
+  // marca de DEFAULT_OFF fica sempre fora dos totais logo depois de carregar
+  applyDefaultOff();
   if(n&&!silent)setTimeout(()=>toast(n+' alterações da simulação anterior reaplicadas'),400);
   return n;
 }
