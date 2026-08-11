@@ -5460,6 +5460,10 @@ function verSetorNoMapa(i){
 let mapaGeoEnviada=false;
 function enviarGeoMapa(){
   if(!mapaFrameEl||mapaGeoEnviada)return;
+  /* iframe ainda carregando: a mensagem se perderia e a geografia ficaria marcada como
+     enviada, deixando o mapa vazio ate a proxima troca de vista. O onload chama syncMapa,
+     que reenvia. */
+  if(!mapaReady)return;
   let geo;
   try{geo=buildGeoMapa();}catch(e){return;}
   if(!geo.k.length)return;
