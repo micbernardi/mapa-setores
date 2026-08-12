@@ -317,6 +317,12 @@ tr.moff td .badge{opacity:1}
 .sedebox .sdtog{background:transparent;border:0;color:var(--inf);font-size:11px;font-weight:600;padding:0 0 0 6px;cursor:pointer}
 .emptymsg{padding-top:16px}
 .emptymsg{color:var(--mut2);font-size:13px;padding:20px 0;text-align:center}
+/* seccoes da aba de movimentacao de bricks (sairam / entraram) */
+.movsec{display:flex;align-items:baseline;gap:8px;margin:18px 0 -4px;font-size:12px;
+  font-weight:700;letter-spacing:.03em;text-transform:uppercase}
+.movsec.out{color:var(--neg)} .movsec.in{color:var(--pos)}
+.movsec .n{font-size:11.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--mut2)}
+.movempty{color:var(--mut2);font-size:12.5px;padding:10px 0 2px}
 
 /* changes modal */
 #chgList{list-style:none}
@@ -3646,6 +3652,20 @@ function sectorLostBricks(sIdx){
   }
   return out;
 }
+/* espelho de sectorLostBricks: bricks que a simulacao trouxe de outro setor para este.
+   orig -1 quer dizer brick que a base nao atribuia a ninguem nesta linha */
+function sectorGainedBricks(sIdx){
+  const L=efLinha(sIdx);
+  const out=[];
+  for(const[k,dest]of S.brickOv){
+    const[bStr,lStr]=k.split('|');
+    if(+lStr!==L||dest!==sIdx)continue;
+    const b=+bStr;
+    const orig=L===0?S.bricks[b].sP:S.bricks[b].sI;
+    if(orig!==sIdx)out.push({b,orig});
+  }
+  return out;
+}
 function renderSectorModal(){
   if(modalSector<0)return;
   const s=S.setores[modalSector];
@@ -3681,13 +3701,14 @@ function renderSectorModal(){
   $('smMetaR').innerHTML=mr;
 
   const lost=sectorLostBricks(modalSector);
-  $('smTabSaidas').textContent='Saíram ('+lost.length+')';
+  const gain=sectorGainedBricks(modalSector);
+  $('smTabSaidas').textContent='Saíram ('+lost.length+') · Entraram ('+gain.length+')';
   document.querySelectorAll('.mtabs button').forEach(b=>b.classList.toggle('on',b.dataset.mt===modalTab));
 
   if(modalTab==='bricks')renderModalBricks(pd);
   else if(modalTab==='marcas')renderModalMarcas(pd);
   else if(modalTab==='reest')renderModalReest();
-  else renderModalSaidas(lost,pd);
+  else renderModalSaidas(lost,gain,pd);
 }
 /* ---------- assistente de reestruturacao ---------- */
 function reSetTab(m){reMode=m;reSel.clear();reDest.clear();renderSectorModal();}
@@ -4030,19 +4051,61 @@ function renderModalMarcas(pd){
   $('smBody').innerHTML=html+'</tbody></table>';
   $('smFoot').innerHTML='';
 }
-function renderModalSaidas(lost,pd){
-  if(!lost.length){$('smBody').innerHTML='<div class="emptymsg">Nenhum brick saiu deste setor na simulação.</div>';$('smFoot').innerHTML='';return;}
-  const L=S.setores[modalSector].linha;
-  let html=`<table><thead><tr><th>Brick</th><th>Cidade</th><th>Foi para</th><th class="td-r" style="text-align:right">${esc(pd.lbl)}</th><th></th></tr></thead><tbody>`;
-  for(const{b,dest}of lost){
-    const bi=S.bricks[b];
-    html+=`<tr><td style="font-weight:600">${esc(bi.name)}</td>
-      <td style="color:var(--mut)">${esc(bi.city)}</td>
-      <td>${S.setores[dest].num} - ${esc(S.setores[dest].nomeEstudo||S.setores[dest].nome)}</td>
-      <td class="td-r num" style="text-align:right">${fmtBRL(cache.bs.cur[b*2+L])}</td>
-      <td style="text-align:right"><button class="linkbtn" onclick="undoBrick(${b},${L})">devolver</button></td></tr>`;
+function renderModalSaidas(lost,gain,pd){
+  /* a linha e sempre a efetiva: num setor convertido, quem manda e a linha da simulacao,
+     senao o valor e o desfazer sairiam da linha errada */
+  const L=efLinha(modalSector);
+  if(!lost.length&&!gain.length){
+    $('smBody').innerHTML='<div class="emptymsg">Nenhum brick entrou ou saiu deste setor na simulação.</div>';
+    $('smFoot').innerHTML='';return;
   }
-  $('smBody').innerHTML=html+'</tbody></table>';
+  const val=b=>cache.bs.cur[b*2+L];
+  const tOut=lost.reduce((a,x)=>a+val(x.b),0);
+  const tIn=gain.reduce((a,x)=>a+val(x.b),0);
+  const sal=tIn-tOut;
+  /* nome do setor de origem ou destino, com aviso quando o outro lado esta encerrado */
+  const setLbl=i=>{
+    if(i<0)return '<span style="color:var(--mut2)">sem setor na base</span>';
+    const o=S.setores[i];
+    return `${o.num} - ${esc(o.nomeEstudo||o.nome)}${o.extinto?' <span class="badge bZero">encerrado</span>':''}`;
+  };
+  let html=`<div class="rebar">
+    <div class="recard"><div class="k">Saíram</div><div class="v ${tOut?'bad':''}">${fmtBRL(tOut)}</div></div>
+    <div class="recard"><div class="k">Entraram</div><div class="v ${tIn?'good':''}">${fmtBRL(tIn)}</div></div>
+    <div class="recard"><div class="k">Saldo em ${esc(pd.lbl)}</div>
+      <div class="v ${sal<0?'bad':sal>0?'good':''}">${sal>0?'+':''}${fmtBRL(sal)}</div></div>
+  </div>`;
+
+  html+=`<div class="movsec out">Saíram <span class="n">${lost.length} brick${lost.length===1?'':'s'}</span></div>`;
+  if(!lost.length)html+='<div class="movempty">Nenhum brick saiu deste setor na simulação.</div>';
+  else{
+    html+=`<table><thead><tr><th>Brick</th><th>Cidade</th><th>Foi para</th><th class="td-r" style="text-align:right">${esc(pd.lbl)}</th><th></th></tr></thead><tbody>`;
+    for(const{b,dest}of lost){
+      const bi=S.bricks[b];
+      html+=`<tr><td style="font-weight:600">${esc(bi.name)}</td>
+        <td style="color:var(--mut)">${esc(bi.city)}</td>
+        <td>${setLbl(dest)}</td>
+        <td class="td-r num" style="text-align:right">${fmtBRL(val(b))}</td>
+        <td style="text-align:right"><button class="linkbtn" onclick="undoBrick(${b},${L})">devolver</button></td></tr>`;
+    }
+    html+='</tbody></table>';
+  }
+
+  html+=`<div class="movsec in">Entraram <span class="n">${gain.length} brick${gain.length===1?'':'s'}</span></div>`;
+  if(!gain.length)html+='<div class="movempty">Nenhum brick entrou neste setor na simulação.</div>';
+  else{
+    html+=`<table><thead><tr><th>Brick</th><th>Cidade</th><th>Veio de</th><th class="td-r" style="text-align:right">${esc(pd.lbl)}</th><th></th></tr></thead><tbody>`;
+    for(const{b,orig}of gain){
+      const bi=S.bricks[b];
+      html+=`<tr><td style="font-weight:600">${esc(bi.name)}</td>
+        <td style="color:var(--mut)">${esc(bi.city)}</td>
+        <td>${setLbl(orig)}</td>
+        <td class="td-r num" style="text-align:right">${fmtBRL(val(b))}</td>
+        <td style="text-align:right"><button class="linkbtn" onclick="undoBrick(${b},${L})" title="Devolver o brick para o setor de origem">devolver</button></td></tr>`;
+    }
+    html+='</tbody></table>';
+  }
+  $('smBody').innerHTML=html;
   $('smFoot').innerHTML='';
 }
 
