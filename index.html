@@ -3147,6 +3147,19 @@ function buildGeo(){
     if(uf){
       const c=munCands(nome).idx.filter(i=>base.list[i].uf===uf);
       if(c.length){MUNOF[b]=c[0];continue;}
+      /* a base de vendas as vezes traz um distrito no lugar do municipio ("CAPIVARITA - RS",
+         que e distrito de Pantano Grande). O proprio nome do brick resolve: ele vem como
+         "0009xxx - MUNICIPIO_LOCALIDADE", entao o texto antes do "_" e o municipio. Sem esta
+         segunda tentativa o brick ficava sem geografia e a cidade sumia do mapa. */
+      const alt=nomeCidadeDoTextoDoBrick(S.bricks[b].name);
+      if(alt&&munKeyBR(alt)!==munKeyBR(nome)){
+        const c2=munCands(alt).idx.filter(i=>base.list[i].uf===uf);
+        if(c2.length){
+          MUNOF[b]=c2[0];
+          GEOAVISOS.push({tipo:'pelo brick',cidade:nome+' - '+uf,alvo:base.list[c2[0]].nome+' - '+uf});
+          continue;
+        }
+      }
       GEOAVISOS.push({tipo:'sem match',cidade:nome+' - '+uf});
       continue;
     }
@@ -3173,7 +3186,34 @@ function buildGeo(){
   }
   // municipios efetivamente usados, na ordem em que serao enviados ao mapa
   MUNUSO=[...MUNBRICKS.keys()].sort((a,b)=>a-b);
+  reportGeo();
   return ok;
+}
+/* Brick sem municipio nao entra no mapa: a cidade dele simplesmente nao e desenhada, sem
+   nenhum aviso. Aqui a conta aparece, com a lista das cidades que ficaram de fora e das que
+   foram resolvidas pelo nome do brick, para dar para corrigir a base ou pedir o apelido. */
+function reportGeo(){
+  const semGeo=new Map();
+  for(let b=0;b<S.bricks.length;b++){
+    if(MUNOF[b]>=0)continue;
+    const{nome,uf}=cidadeDoBrick(S.bricks[b]);
+    const k=(nome||'(sem cidade)')+(uf?' - '+uf:'');
+    semGeo.set(k,(semGeo.get(k)||0)+1);
+  }
+  const pelo=GEOAVISOS.filter(a=>a.tipo==='pelo brick');
+  if(pelo.length){
+    const m=new Map();
+    for(const a of pelo)if(!m.has(a.cidade))m.set(a.cidade,a.alvo);
+    console.log('Cidades resolvidas pelo nome do brick (distrito na base de vendas): '
+      +[...m].map(([de,para])=>de+' -> '+para).join(', '));
+  }
+  S.geoSemMun=[...semGeo.entries()].sort((a,b)=>b[1]-a[1]);
+  if(!S.geoSemMun.length)return;
+  const nB=S.geoSemMun.reduce((a,x)=>a+x[1],0);
+  console.warn('Cidades sem município correspondente (os bricks delas não entram no mapa): ',S.geoSemMun);
+  setTimeout(()=>toast(nB+' brick'+(nB>1?'s':'')+' em '+S.geoSemMun.length+' cidade'
+    +(S.geoSemMun.length>1?'s':'')+' sem município na tabela ficaram fora do mapa: '
+    +S.geoSemMun.slice(0,3).map(x=>x[0]).join(', ')+(S.geoSemMun.length>3?'...':'')),1200);
 }
 /* coordenada da sede de um municipio da tabela nacional */
 function sedeMun(mi){const m=brInit(MUN).list[mi];return m?[m.lon,m.lat]:null;}
@@ -3615,7 +3655,13 @@ function renderSectorModal(){
   const confs=sectorConflicts(modalSector);
   const confRev=confAceito(modalSector,confs);
   $('smTitle').innerHTML=`${s.num} <span style="color:var(--mut2)">|</span> ${esc(s.nomeEstudo||s.nome)} <span class="badge ${L===0?'bP':'bI'}">${LNAME[L]}</span>${conv?` <span class="badge bAlt">convertido, era ${LNAME[s.linha]}</span>`:''}`;
-  let meta=`${esc(pd.lbl)}: <b class="num" style="color:var(--txt)">${fmtBRL(st.cur)}</b> ${evoHtml(st.cur,st.ref,pd.refLbl)} , ${st.nb} bricks`;
+  /* mesma media mensal da lista de setores (YTD dividido pelos meses fechados), com o mesmo
+     realce quando fica abaixo do piso: e por ela que se enxerga se a carteira se sustenta */
+  const mMes=(cache.stY?cache.stY[modalSector].cur:st.cur)/cache.nYtdM;
+  let meta=`${esc(pd.lbl)}: <b class="num" style="color:var(--txt)">${fmtBRL(st.cur)}</b> ${evoHtml(st.cur,st.ref,pd.refLbl)}`
+    +` , <span title="YTD 26 dividido pelos ${cache.nYtdM} meses fechados">média mês:`
+    +` <b class="num" style="${mMes<MEDIA_MIN?'color:var(--neg)':'color:var(--txt)'}">${fmtBRL(mMes)}</b></span>`
+    +` , ${st.nb} bricks`;
   if(conv&&confs.length)meta+=confRev
     ?` , <span style="color:var(--mut)">${confs.length} brick${confs.length>1?'s':''} de outro setor, revisado${confs.length>1?'s':''}</span>`
     :` , <span style="color:var(--neg);font-weight:600">${confs.length} brick${confs.length>1?'s':''} em conflito</span>`;
