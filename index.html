@@ -4801,9 +4801,10 @@ function brickStatus(b,L){
 /* ---------- aba DE/PARA ----------
    Mesmo desenho da aba "BRICKs 2026" da base de bricks: LINHA, BRICK, SETOR ANTIGO,
    SETOR NOVO e OBSERVAÇÕES, na mesma ordem do arquivo (setor antigo crescente e, dentro
-   dele, codigo do brick). SETOR NOVO so e preenchido onde a simulacao trocou o dono do
-   brick, com numero e nome completo do setor de destino; onde nada mudou a celula fica
-   vazia, igual ao arquivo de origem. E a primeira aba do arquivo. O nome usa underline
+   dele, codigo do brick). SETOR NOVO traz sempre o dono final do brick, com numero e nome
+   completo: onde a simulacao trocou, o setor de destino; onde nada mudou, repete o setor
+   antigo. Fica vazia so quando o brick ficou sem dono na simulacao (setor encerrado sem
+   realocacao ou fora da linha). E a primeira aba do arquivo. O nome usa underline
    porque o Excel nao aceita "/" em nome de aba.
 
    A aba tem de trazer todos os bricks da regional, com venda ou sem venda: o cadastro de
@@ -4873,9 +4874,14 @@ function abaDePara(){
     if(b<0)obs.push('BRICK DA RELAÇÃO FORA DA BASE DE VENDAS');
     else if(bi&&bi.semVenda)obs.push('BRICK SEM VENDA NA BASE');
     if(b>=0&&!al&&st.orig<0&&st.eff<0&&alocPorBrick.size)obs.push('BRICK FORA DA RELAÇÃO DE DE/PARA');
+    /* SETOR NOVO sai sempre com o dono final do brick: onde a simulacao trocou, o destino;
+       onde nao mexeu, repete o setor antigo, para a coluna servir de cadastro completo.
+       So fica vazia quando o brick esta mesmo sem dono (setor encerrado sem realocacao ou
+       fora da linha), que e o buraco que precisa aparecer para ser resolvido. */
+    const novo=st.eff>=0?sLbl(st.eff):(st.orig<0?antigo:'');
     const tone=st.eff<0?2:(mudou?(st.orig<0?3:1):0);
     rows.push([cT(LNAME[L],tone),cT(nome,tone),cT(antigo,tone),
-      cT(mudou?sLbl(st.eff):'',tone),cT(obs.join(' | '),tone)]);
+      cT(novo,tone),cT(obs.join(' | '),tone)]);
   }
   return{name:'DE_PARA',xml:sheetXml(rows,[11,46,32,32,26],head.length)};
 }
