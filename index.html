@@ -4426,6 +4426,14 @@ function salvarCenarios(){
   catch(e){toast('Não consegui salvar: o armazenamento do navegador está cheio');}
 }
 function cenPorId(id){return cenarios.find(c=>c.id===id)||null;}
+/* importar duas versoes do mesmo arquivo nao pode gerar dois chips com o mesmo rotulo:
+   o segundo vira "nome (2)", e assim por diante */
+function nomeCenarioLivre(nome){
+  const b=String(nome||'').trim()||'Cenário importado';
+  if(!cenNomeExiste(b))return b;
+  for(let i=2;i<200;i++){const t=b+' ('+i+')';if(!cenNomeExiste(t))return t;}
+  return b+' '+new Date().toLocaleTimeString('pt-BR');
+}
 function cenNomeExiste(nome,exceto){
   const k=normTxt(nome);
   return cenarios.some(c=>c.id!==exceto&&normTxt(c.nome)===k);
@@ -4552,17 +4560,26 @@ async function importarCenarioArquivo(f){
     const dados=pack&&pack.dados?pack.dados:pack;
     if(!dados||typeof dados!=='object'||!('mb'in dados))throw new Error('Este arquivo não parece ser um cenário do simulador.');
     const peso=cenPeso(dados);
-    const nome=(pack&&pack.nome)||f.name;
-    if(!confirm(`Carregar o cenário "${nome}" (${peso} alteraç${peso===1?'ão':'ões'})?\n\nA simulação que está na tela será substituída.`))return;
+    const nome=nomeCenarioLivre((pack&&pack.nome)||f.name.replace(/\.(xlsx|json)$/i,''));
+    /* aviso so quando ha trabalho na tela que nao esta guardado em nenhum chip: o cenario
+       importado vira mais um chip, entao os que ja estavam salvos nao correm risco */
+    const aviso=cenSujo()
+      ?'\n\nO cenário "'+((cenPorId(cenAtivo)||{}).nome||'')+'" tem mudanças não salvas, que serão perdidas.'
+      :((!cenAtivo&&!simVazia())?'\n\nA simulação que está na tela não está salva em nenhum cenário e será perdida.':'');
+    if(!confirm(`Importar o cenário "${nome}" (${peso} alteraç${peso===1?'ão':'ões'})?\n\nEle entra na barra de cenários e passa a ser o cenário da tela.`+aviso))return;
     limparSimulacao();
     const n=applySnapshot(dados,true);
-    cenAtivo=null;
+    /* guarda como chip proprio: importar um segundo arquivo nao apaga o primeiro, e a
+       troca entre eles passa a ser um clique na barra */
+    const id='c'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    cenarios.push({id,nome,ts:Date.now(),dados:snapshotState()});
+    cenAtivo=id;
     salvarCenarios();
     saveLS();
     renderAll();
     if(modalSector>=0)renderSectorModal();
     const fora=peso-n;
-    toast(n+' alteraç'+(n===1?'ão aplicada':'ões aplicadas')
+    toast('Cenário "'+nome+'" importado · '+n+' alteraç'+(n===1?'ão aplicada':'ões aplicadas')
       +(fora>0?' · '+fora+' não coube'+(fora===1?'':'ram')+' nesta base (bricks ou setores diferentes)':''));
   }catch(err){
     toast(err&&err.message?err.message:'Não consegui ler o arquivo do cenário');
