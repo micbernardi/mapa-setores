@@ -374,7 +374,7 @@ body.mapaFull #cenBar{display:none}
     <div class="upcard" id="cardEstudo">
       <div class="step">Arquivo 1</div>
       <h3>Base de bricks e numeração</h3>
-      <p>Uma aba com linha, setor e brick já basta. Pode selecionar mais de um arquivo para carregar várias regionais.</p>
+      <p>Uma aba com linha, setor e brick já basta. Também aceita a planilha oficial de setorização, com as colunas DE e PARA. Pode selecionar mais de um arquivo para carregar várias regionais.</p>
       <div class="fname" id="fnEstudo"></div>
       <input type="file" id="fileEstudo" accept=".xlsx" hidden multiple>
     </div>
@@ -621,16 +621,60 @@ self.onmessage=async(ev)=>{
     const agg=new Map();
     let rowCount=0;
     const reCell=/<c r="([A-Z]+)\d+"([^>]*)>(?:<v>([^<]*)<\/v>)?/g;
+    /* o cabecalho precisa de uma leitura propria: alem do texto compartilhado (t="s"), a
+       celula do mes pode vir como texto inline (<is><t>) ou como data de verdade (serial
+       numerico com formato de data). Nos dois ultimos casos a regex de valor nao pega nada,
+       a coluna do mes some sem aviso e o YTD fecha com um mes a menos. */
+    const reCellHdr=/<c r="([A-Z]+)\d+"([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+    const MESES=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+    function serialParaMes(n){
+      const d=new Date(Date.UTC(1899,11,30)+Math.round(n)*86400000);
+      return MESES[d.getUTCMonth()]+'/'+String(d.getUTCFullYear()).slice(-2);
+    }
+    function textoCelula(attrs,inner){
+      if(inner==null)return '';
+      if(attrs.indexOf('t="s"')>=0){
+        const v=/<v>([^<]*)<\/v>/.exec(inner);
+        if(!v)return '';
+        const t=sst[+v[1]];
+        return t==null?'':String(t);
+      }
+      if(attrs.indexOf('t="inlineStr"')>=0||inner.indexOf('<is>')>=0){
+        let s='',t;const reT=/<t[^>]*>([\s\S]*?)<\/t>/g;
+        while((t=reT.exec(inner)))s+=t[1];
+        return decodeEnt(s);
+      }
+      const v=/<v>([^<]*)<\/v>/.exec(inner);
+      if(!v)return '';
+      const num=+v[1];
+      // serial de data entre 2015 e 2039: cabecalho numerico nesta faixa so pode ser mes
+      if(!Number.isNaN(num)&&num>=42000&&num<=51500)return serialParaMes(num);
+      return String(v[1]);
+    }
+    /* aceita jan/26, jan-26, jan.26, jan 26, janeiro/2026, 2026-01 e 01/2026, tudo
+       normalizado para o mesmo rotulo mmm/aa que o resto do simulador usa */
+    function rotuloMes(h){
+      const t=String(h).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+      let m=/^([a-z]{3})[a-z]*\s*[\/\-. ]\s*(\d{2}|\d{4})$/.exec(t);
+      if(m){
+        const i=MESES.indexOf(m[1]);
+        if(i>=0)return MESES[i]+'/'+m[2].slice(-2);
+      }
+      m=/^(\d{4})[\/\-.](\d{1,2})$/.exec(t);
+      if(m&&+m[2]>=1&&+m[2]<=12)return MESES[+m[2]-1]+'/'+m[1].slice(-2);
+      m=/^(\d{1,2})[\/\-.](\d{4})$/.exec(t);
+      if(m&&+m[1]>=1&&+m[1]<=12)return MESES[+m[1]-1]+'/'+m[2].slice(-2);
+      return null;
+    }
 
     function parseRow(rowStr){
       reCell.lastIndex=0;let m;
       if(!header){
         header=[];
-        while((m=reCell.exec(rowStr))){
-          if(m[3]===undefined)continue;
-          const idx=colToIdx(m[1]);
-          const raw=m[2].indexOf('t="s"')>=0?sst[+m[3]]:m[3];
-          header[idx]=String(raw).trim();
+        reCellHdr.lastIndex=0;
+        while((m=reCellHdr.exec(rowStr))){
+          const txt=textoCelula(m[2],m[3]).trim();
+          if(txt)header[colToIdx(m[1])]=txt;
         }
         colRole=header.map(h=>{
           if(!h)return null;
@@ -640,8 +684,9 @@ self.onmessage=async(ev)=>{
           if(H==='CIDADE')return{t:'k',k:2};
           if(H==='BRICK')return{t:'k',k:3};
           if(H==='MARCA')return{t:'k',k:4};
-          if(/^[a-z\u00e7]{3}\/\d{2}$/i.test(h)){months.push(h);return{t:'m',i:months.length-1};}
           if(H in histNames)return{t:'h',i:histNames[H]};
+          const mm=rotuloMes(h);
+          if(mm){months.push(mm);return{t:'m',i:months.length-1};}
           return null;
         });
         nM=months.length;
@@ -717,7 +762,10 @@ self.onmessage=async(ev)=>{
       vArr.set(arr,i*(nM+3));
       i++;
     }
-    postMessage({type:'done',months,nM,bricks,marcas,setores,rowCount,
+    /* coluna com cabecalho preenchido que nao virou nem chave, nem mes, nem historico:
+       e o unico jeito de a perda de uma coluna de mes aparecer em vez de sumir calada */
+    const ignoradas=header.map((h,i)=>(h&&!colRole[i])?h:null).filter(Boolean);
+    postMessage({type:'done',months,nM,bricks,marcas,setores,rowCount,ignoradas,
       bArr:bArr.buffer,mArr:mArr.buffer,vArr:vArr.buffer},
       [bArr.buffer,mArr.buffer,vArr.buffer]);
   }catch(err){
@@ -832,7 +880,12 @@ $('btnProcess').onclick=async()=>{
     aplicarBase(base);
     setProg(98,'Concluído: '+base.rowCount.toLocaleString('pt-BR')+' linhas, '
       +base.bricks.length+' bricks, '+base.marcas.length+' marcas, '+base.setores.length+' setores'
+      +', '+base.nM+' mes'+(base.nM>1?'es':'')+' ('+base.months.join(', ')+')'
       +(partes.length>1?', '+partes.length+' bases':''));
+    const ign=[];
+    for(const p of partes)for(const h of(p.ignoradas||[]))if(ign.indexOf(h)<0)ign.push(h);
+    if(ign.length)setTimeout(()=>toast(ign.length+' coluna'+(ign.length>1?'s':'')
+      +' do cabeçalho não foi reconhecida e ficou de fora: '+ign.join(', ')),1400);
     setProg(99,'Salvando dados no navegador...');
     await idbSave().catch(()=>{});
     resetOverrides();
@@ -1012,29 +1065,45 @@ function estudoSheetScore(n){
   if(t.includes('EXTINT')||t.includes('ENCERRAD'))sc-=20; // aba de setores extintos nao e a principal
   return sc;
 }
+/* O cabecalho da numeracao chega em dois desenhos que dizem a mesma coisa: o do estudo,
+   com SETOR ANTIGO e SETOR NOVO, e o da planilha oficial de setorizacao (SETORIZAcaO 2026,
+   aba de ciclo), que usa DE e PARA. Os dois viram o mesmo ci, entao o resto do parser
+   nao muda. */
+function mapEstudoCols(cols,ci){
+  cols.forEach((c,i)=>{
+    if(c==='SETOR ESPELHO')ci.esp=i;
+    else if(c.startsWith('SETOR ANTIGO')||c==='DE')ci.ant=i;
+    else if(c.startsWith('SETOR NOVO')||c==='PARA')ci.novo=i;
+    else if(c==='NOME')ci.nome=i;
+    else if(c.startsWith('LINHA'))ci.linha=i;
+    else if(c==='STATUS')ci.status=i;
+    else if(c==='NOVA SEDE')ci.sede=i;
+    else if(c==='REGIONAL')ci.reg=i;
+    else if(c==='PLACA')ci.placa=i;
+    else if(c.startsWith('VEICULO'))ci.veic=i;
+    else if(c.startsWith('OBSERVACAO'))ci.obs=i;
+    else if(c.startsWith('DATA ADMISS'))ci.adm=i;
+    else if(c==='DDD')ci.ddd=i;
+    else if(c==='TELEFONE')ci.tel=i;
+  });
+  return ci;
+}
 function findEstudoHeader(rows){
   let hIdx=-1,ci={};
-  for(let r=0;r<Math.min(rows.length,10);r++){
+  const lim=Math.min(rows.length,10);
+  for(let r=0;r<lim;r++){
     const cols=(rows[r]||[]).map(c=>normTxt(c));
-    if(cols.some(c=>c.startsWith('SETOR NOVO'))){
-      hIdx=r;
-      cols.forEach((c,i)=>{
-        if(c==='SETOR ESPELHO')ci.esp=i;
-        else if(c.startsWith('SETOR ANTIGO'))ci.ant=i;
-        else if(c.startsWith('SETOR NOVO'))ci.novo=i;
-        else if(c==='NOME')ci.nome=i;
-        else if(c.startsWith('LINHA'))ci.linha=i;
-        else if(c==='STATUS')ci.status=i;
-        else if(c==='NOVA SEDE')ci.sede=i;
-        else if(c==='REGIONAL')ci.reg=i;
-        else if(c==='PLACA')ci.placa=i;
-        else if(c.startsWith('VEICULO'))ci.veic=i;
-        else if(c.startsWith('OBSERVACAO'))ci.obs=i;
-        else if(c.startsWith('DATA ADMISS'))ci.adm=i;
-        else if(c==='DDD')ci.ddd=i;
-        else if(c==='TELEFONE')ci.tel=i;
-      });
-      break;
+    if(cols.some(c=>c.startsWith('SETOR NOVO'))){hIdx=r;mapEstudoCols(cols,ci);break;}
+  }
+  /* DE/PARA so vale como aba de numeracao quando vem acompanhado de NOME e de DE ou
+     SETOR ESPELHO: sozinha, uma coluna PARA pode ser qualquer outra coisa */
+  if(hIdx<0){
+    for(let r=0;r<lim;r++){
+      const cols=(rows[r]||[]).map(c=>normTxt(c));
+      if(cols.indexOf('PARA')>=0&&cols.indexOf('NOME')>=0
+        &&(cols.indexOf('DE')>=0||cols.indexOf('SETOR ESPELHO')>=0)){
+        hIdx=r;mapEstudoCols(cols,ci);break;
+      }
     }
   }
   return{hIdx,ci};
@@ -1177,7 +1246,7 @@ function montarEquipes(acc){
 }
 async function parseEstudo(files){
   const list=Array.isArray(files)?files:(files&&typeof files.length==='number'?Array.from(files):[files]);
-  const acc={teams:null,gr:null,extintos:[],brickAlloc:[],
+  const acc={teams:null,gr:null,grs:[],extintos:[],brickAlloc:[],
     pvs:[],pvNum:new Set(),gdName:new Map(),gdLabel:new Map()};
   for(const file of list){
     const buf=await file.arrayBuffer();
@@ -1186,11 +1255,32 @@ async function parseEstudo(files){
   }
   marcarEncerradosDoArquivo(acc);
   acc.teams=montarEquipes(acc);
-  if(!acc.teams.length)throw new Error('Nenhuma aba reconhecida. É preciso uma aba com as colunas de setor e de brick, ou uma aba de numeração com a coluna SETOR NOVO');
-  S.study={teams:acc.teams,gr:acc.gr,extintos:acc.extintos,brickAlloc:acc.brickAlloc,
+  if(!acc.teams.length)throw new Error('Nenhuma aba reconhecida. É preciso uma aba com as colunas de setor e de brick, ou uma aba de numeração com SETOR ANTIGO/SETOR NOVO ou DE/PARA');
+  S.study={teams:acc.teams,gr:acc.gr,grs:acc.grs,extintos:acc.extintos,brickAlloc:acc.brickAlloc,
     derivado:!!acc.derivado,semLinha:!!acc.semLinha,encDiag:acc.encDiag||null};
   S.studyByNum=new Map();
   acc.teams.forEach(t=>t.sectors.forEach(s=>S.studyByNum.set(s.num,s)));
+}
+/* Com um arquivo nacional de numeracao vem um GR por regional. O cabecalho do export tem
+   que trazer o GR da regional que esta na simulacao, e nao o primeiro do arquivo: manda a
+   regional mais frequente entre os setores que ficaram nas equipes. */
+function grDaSimulacao(){
+  if(!S.study)return null;
+  const lista=S.study.grs||[];
+  if(lista.length>1){
+    const cont=new Map();
+    for(const t of(S.teams||[]))for(const i of t.sIdxs){
+      const r=regDe(S.setores[i].num);
+      cont.set(r,(cont.get(r)||0)+1);
+    }
+    let melhor=null,n=-1;
+    for(const[r,c]of cont){
+      const g=lista.find(x=>regDe(x.num)===r);
+      if(g&&c>n){n=c;melhor=g;}
+    }
+    if(melhor)return melhor;
+  }
+  return lista[0]||S.study.gr||null;
 }
 function parseEstudoWB(wb,acc){
   // as abas sao reconhecidas pelo cabecalho, nao pelo nome: o mesmo arquivo pode ter a
@@ -1222,7 +1312,9 @@ function parseEstudoWB(wb,acc){
      As linhas de GD (numero terminado em 00) deixam de definir o agrupamento e passam a
      servir so para dar o nome do gerente da equipe. */
   const pvs=[];const gdName=new Map();const gdLabel=new Map();
-  let grRow=null,pendLabel=null;
+  /* o arquivo nacional traz um GR por regional, entao a linha de GR vira lista e nao um
+     valor unico: guardar so o ultimo deixava o cabecalho do export com o GR errado */
+  const grRows=[];let pendLabel=null;
   for(let r=hIdx+1;r<rows.length;r++){
     const row=rows[r]||[];
     const nome=row[ci.nome];
@@ -1244,11 +1336,14 @@ function parseEstudoWB(wb,acc){
       tel:ci.tel!==undefined?String(row[ci.tel]||'').trim():'',
       statusTxt:ci.status!==undefined?String(row[ci.status]||'').trim():''
     };
-    if(status==='GR'||(!status&&num%100000===0)){
-      grRow={num,nome:String(nome).replace(/\u00a0/g,' ').trim(),
+    /* linha de nivel regional/nacional: numero terminado em 00000 nunca e PV. Na planilha
+       oficial o STATUS dessas linhas vem preenchido com outra coisa (GNV, por exemplo),
+       entao o numero manda e o status nao pode barrar */
+    if(status==='GR'||num%100000===0){
+      grRows.push({num,nome:String(nome).replace(/\u00a0/g,' ').trim(),
         linhaTxt:String(row[ci.linha]||'').trim(),
         espelho:row[ci.esp]||'',antigo:row[ci.ant]||'',
-        sede:ci.sede!==undefined?String(row[ci.sede]||'').trim():'',...raw};
+        sede:ci.sede!==undefined?String(row[ci.sede]||'').trim():'',...raw});
       continue;
     }
     if(status==='GD'||(!status&&num%100===0)){
@@ -1274,7 +1369,11 @@ function parseEstudoWB(wb,acc){
   for(const s of pvs)if(!acc.pvNum.has(s.num)){acc.pvNum.add(s.num);acc.pvs.push(s);}
   for(const[k,v]of gdName)if(!acc.gdName.has(k))acc.gdName.set(k,v);
   for(const[k,v]of gdLabel)if(!acc.gdLabel.has(k))acc.gdLabel.set(k,v);
-  if(grRow&&!acc.gr)acc.gr=grRow;
+  for(const g of grRows){
+    const rk=regDe(g.num);
+    if(!acc.grs.some(x=>regDe(x.num)===rk))acc.grs.push(g);
+    if(!acc.gr)acc.gr=g;
+  }
   // aba de setores extintos (encerrados no estudo): so os bricks deles precisam de realocacao
   const extName=wb.SheetNames.find(n=>normTxt(n).includes('EXTINT')||normTxt(n).includes('ENCERRAD'));
   if(extName){
@@ -1309,7 +1408,7 @@ function runWorker(buffer,idx,total){
       }else if(d.type==='done'){
         w.terminate();URL.revokeObjectURL(url);
         resolve({months:d.months,nM:d.nM,bricks:d.bricks,marcas:d.marcas,setores:d.setores,
-          rowCount:d.rowCount,
+          rowCount:d.rowCount,ignoradas:d.ignoradas||[],
           bArr:new Int32Array(d.bArr),mArr:new Int16Array(d.mArr),vArr:new Float64Array(d.vArr)});
       }else if(d.type==='error'){
         w.terminate();URL.revokeObjectURL(url);
@@ -2284,12 +2383,16 @@ function renderSummary(){
     rp+=cache.bs.ref[b*2];ri+=cache.bs.ref[b*2+1];
   }
   const tot=tp+ti,rtot=rp+ri;
+  /* quais meses da base entraram neste periodo: sem isso um YTD que perdeu uma coluna de
+     mes no cabecalho da base passa despercebido e so aparece como total baixo */
+  const mesesPd=pd.cur.map(i=>S.months[i]).join(', ');
+  const lblPd=`<span title="${esc(pd.cur.length+' mes'+(pd.cur.length>1?'es':'')+' da base: '+mesesPd)}" style="border-bottom:1px dotted var(--mut2);cursor:help">${esc(pd.lbl)}</span>`;
   const nChg=S.brickOv.size+S.marcaOv.size+S.marcaOff.size+S.linhaOv.size+S.teamOv.size+S.reativOv.size+S.desligOv.size+teamEditsCount();
   const nPend=cache.pend[0].length+cache.pend[1].length;
   let pendVal=0;
   for(let L=0;L<2;L++)for(const r of cache.pend[L])pendVal+=cache.bs.cur[r.b*2+L];
   $('summary').innerHTML=`
-    <div class="sumcard"><div class="lb">Total geral, ${esc(pd.lbl)}${nChg?'<span class="chgchip" onclick="openChanges()">'+nChg+' alterações</span>':''}</div>
+    <div class="sumcard"><div class="lb">Total geral, ${lblPd}${nChg?'<span class="chgchip" onclick="openChanges()">'+nChg+' alterações</span>':''}</div>
       <div class="vl num">${fmtBRL(tot)}</div><div>${evoHtml(tot,rtot,pd.refLbl)}</div></div>
     <div class="sumcard pl"><div class="lb">Linha PRIME</div>
       <div class="vl num">${fmtBRL(tp)}</div><div>${evoHtml(tp,rp,pd.refLbl)}</div></div>
@@ -2747,7 +2850,7 @@ function setMarcaSort(k){
    clicar em "restaurar" na aba Marcas por linha. Esse clique vale para sempre: a marca
    volta a contar tambem nos carregamentos seguintes e em qualquer cenario, ate voce
    excluir de novo ou resetar a simulacao. */
-const DEFAULT_OFF=['HIXIZINE'];
+const DEFAULT_OFF=[];
 /* quais entradas de DEFAULT_OFF voce religou. Fica num registro proprio do navegador, e
    nao dentro da simulacao salva, porque e uma preferencia sua e nao uma alteracao de
    setorizacao: vale para todos os cenarios e nao viaja no arquivo exportado. */
@@ -5076,7 +5179,7 @@ async function exportarSetorizacao(){
     const nC=head.length;
     const rows=[head.map(h=>cS(h,XS.hdr))];
     const blank=(st)=>{const a=[];for(let c=0;c<nC;c++)a.push(cS('',st));return a;};
-    const gr=S.study&&S.study.gr;
+    const gr=grDaSimulacao();
     if(gr){
       const a=blank(XS.gr);
       const v=[gr.espelho,gr.regional,gr.antigo,gr.num,gr.placa,gr.veiculo,gr.nome,gr.obs,admStr(gr.adm),gr.linhaTxt,gr.statusTxt,gr.ddd,gr.tel];
