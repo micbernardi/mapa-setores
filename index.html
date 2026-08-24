@@ -1247,7 +1247,7 @@ function montarEquipes(acc){
 async function parseEstudo(files){
   const list=Array.isArray(files)?files:(files&&typeof files.length==='number'?Array.from(files):[files]);
   const acc={teams:null,gr:null,grs:[],extintos:[],brickAlloc:[],
-    pvs:[],pvNum:new Set(),gdName:new Map(),gdLabel:new Map()};
+    pvs:[],pvNum:new Set(),gdName:new Map(),gdLabel:new Map(),gdRow:new Map()};
   for(const file of list){
     const buf=await file.arrayBuffer();
     const wb=XLSX.read(buf,{type:'array'});
@@ -1256,7 +1256,7 @@ async function parseEstudo(files){
   marcarEncerradosDoArquivo(acc);
   acc.teams=montarEquipes(acc);
   if(!acc.teams.length)throw new Error('Nenhuma aba reconhecida. É preciso uma aba com as colunas de setor e de brick, ou uma aba de numeração com SETOR ANTIGO/SETOR NOVO ou DE/PARA');
-  S.study={teams:acc.teams,gr:acc.gr,grs:acc.grs,extintos:acc.extintos,brickAlloc:acc.brickAlloc,
+  S.study={teams:acc.teams,gr:acc.gr,grs:acc.grs,gdRow:acc.gdRow,extintos:acc.extintos,brickAlloc:acc.brickAlloc,
     derivado:!!acc.derivado,semLinha:!!acc.semLinha,encDiag:acc.encDiag||null};
   S.studyByNum=new Map();
   acc.teams.forEach(t=>t.sectors.forEach(s=>S.studyByNum.set(s.num,s)));
@@ -1311,7 +1311,7 @@ function parseEstudoWB(wb,acc){
      Ex.: 101001..101010 -> equipe 101000; 101101..101108 -> equipe 101100; 105110 -> 105100.
      As linhas de GD (numero terminado em 00) deixam de definir o agrupamento e passam a
      servir so para dar o nome do gerente da equipe. */
-  const pvs=[];const gdName=new Map();const gdLabel=new Map();
+  const pvs=[];const gdName=new Map();const gdLabel=new Map();const gdRow=new Map();
   /* o arquivo nacional traz um GR por regional, entao a linha de GR vira lista e nao um
      valor unico: guardar so o ultimo deixava o cabecalho do export com o GR errado */
   const grRows=[];let pendLabel=null;
@@ -1349,6 +1349,13 @@ function parseEstudoWB(wb,acc){
     if(status==='GD'||(!status&&num%100===0)){
       // linha de GD/equipe (STATUS GD; ou, sem status, numero terminado em "00"): so o gerente
       gdName.set(num,String(nome).replace(/\u00a0/g,' ').trim());
+      /* a linha inteira do GD tambem fica guardada: a aba SETORIZACAO SIMULADA reproduz o
+         arquivo oficial, onde cada equipe e encabecada pela linha do proprio gerente com
+         placa, veiculo, admissao e telefone */
+      gdRow.set(num,{num,nome:String(nome).replace(/\u00a0/g,' ').trim(),
+        linhaTxt:String(row[ci.linha]||'').trim(),
+        espelho:row[ci.esp]||'',antigo:row[ci.ant]||'',
+        sede:ci.sede!==undefined?String(row[ci.sede]||'').trim():'',...raw});
       if(pendLabel&&!gdLabel.has(num)){gdLabel.set(num,pendLabel);pendLabel=null;}
       continue;
     }
@@ -1368,6 +1375,7 @@ function parseEstudoWB(wb,acc){
      setorizacao de duas regionais juntas tem que somar as duas, nao trocar uma pela outra */
   for(const s of pvs)if(!acc.pvNum.has(s.num)){acc.pvNum.add(s.num);acc.pvs.push(s);}
   for(const[k,v]of gdName)if(!acc.gdName.has(k))acc.gdName.set(k,v);
+  for(const[k,v]of gdRow)if(!acc.gdRow.has(k))acc.gdRow.set(k,v);
   for(const[k,v]of gdLabel)if(!acc.gdLabel.has(k))acc.gdLabel.set(k,v);
   for(const g of grRows){
     const rk=regDe(g.num);
@@ -1631,7 +1639,7 @@ function buildTeams(){
   S.teams=[];
   if(S.study){
     for(const t of S.study.teams){
-      const team={name:t.name,sIdxs:[]};
+      const team={name:t.name,num:t.num,sIdxs:[]};
       for(const st of t.sectors){
         // 1) nome exato; 2) nome aproximado (mesmo primeiro nome + 2 tokens em comum, ex.: sobrenome de casada);
         // 3) SETOR NOVO; 4) SETOR ANTIGO
@@ -1713,8 +1721,8 @@ function buildTeams(){
   // aproveite todos os setores da base: sao os bricks que precisam de realocacao
   classificarSetores();
   // guardar agrupamento original e aplicar movimentos de equipe simulados
-  S.teamsBase=S.teams.map(t=>({name:t.name,orig:t.name,added:false,sIdxs:t.sIdxs.slice()}));
-  S.teamsOrig=S.teamsBase.map(t=>({name:t.name,orig:t.orig,sIdxs:t.sIdxs.slice()}));
+  S.teamsBase=S.teams.map(t=>({name:t.name,num:t.num,orig:t.name,added:false,sIdxs:t.sIdxs.slice()}));
+  S.teamsOrig=S.teamsBase.map(t=>({name:t.name,num:t.num,orig:t.orig,sIdxs:t.sIdxs.slice()}));
   S.teamDel.clear();
   for(const t of S.teams)for(const i of t.sIdxs)S.setores[i].teamOrig=t.name;
   applyTeamOv();
@@ -1930,7 +1938,7 @@ function applyStatusOv(){
 }
 function applyTeamOv(){
   applyStatusOv();
-  S.teams=S.teamsBase.map(t=>({name:t.name,orig:t.orig,added:t.added,sIdxs:t.sIdxs.filter(i=>S.setores[i]&&!S.setores[i].extinto)}));
+  S.teams=S.teamsBase.map(t=>({name:t.name,num:t.num,orig:t.orig,added:t.added,sIdxs:t.sIdxs.filter(i=>S.setores[i]&&!S.setores[i].extinto)}));
   const byName=new Map(S.teams.map(t=>[t.name,t]));
   for(const[i,name]of S.reativOv){
     const dest=byName.get(name)||S.teams[0];
@@ -4400,7 +4408,7 @@ function limparSimulacao(){
   S.brickOv.clear();S.marcaOv.clear();S.marcaOff.clear();S.linhaOv.clear();S.teamOv.clear();S.reativOv.clear();S.desligOv.clear();S.confOk.clear();
   // restaurar estrutura original das distritais (nomes, criadas, excluidas)
   if(S.teamsOrig){
-    S.teamsBase=S.teamsOrig.map(t=>({name:t.name,orig:t.orig,added:false,sIdxs:t.sIdxs.slice()}));
+    S.teamsBase=S.teamsOrig.map(t=>({name:t.name,num:t.num,orig:t.orig,added:false,sIdxs:t.sIdxs.slice()}));
     S.teamDel.clear();
     for(const t of S.teamsBase)for(const i of t.sIdxs)if(S.setores[i])S.setores[i].teamOrig=t.name;
   }
@@ -4861,6 +4869,22 @@ function brickNamesTxt(list){
   return out.join(' / ');
 }
 function sedeSimulada(i){return brickNamesTxt(sectorBricks(i).list);}
+/* NOVA SEDE do arquivo oficial e lista de cidades, nao de bricks: varios bricks caem na
+   mesma cidade, entao a cidade entra uma vez so, em ordem alfabetica */
+function cidadesTxt(list){
+  if(!list||!list.length)return'';
+  const vistas=new Set(),out=[];
+  for(const b of list){
+    const c=String((S.bricks[b]&&S.bricks[b].city)||'').trim();
+    if(!c)continue;
+    const k=normTxt(c);
+    if(vistas.has(k))continue;
+    vistas.add(k);out.push(c);
+  }
+  out.sort((x,y)=>{const a=normTxt(x),b=normTxt(y);return a<b?-1:(a>b?1:0);});
+  return out.join(' / ');
+}
+function cidadesSimuladas(i){return cidadesTxt(sectorBricks(i).list);}
 /* espelho recalculado: setor da outra linha que cobre a maior parte dos bricks deste setor */
 function espelhoSimulado(i){
   const{L,list}=sectorBricks(i);
@@ -5172,62 +5196,46 @@ async function exportarSetorizacao(){
   /* ===================== ABA 1: DE_PARA ===================== */
   sheets.push(abaDePara());
 
-  /* ===================== ABA 2: SETORIZACAO SIMULADA ===================== */
+  /* ===================== ABA 2: SETORIZACAO SIMULADA =====================
+     Esta aba reproduz o layout do arquivo oficial de setorizacao: mesmas 14 colunas, na
+     mesma ordem, com DE e PARA no lugar de setor antigo e setor novo. Placa, veiculo,
+     admissao, status, DDD e telefone vem do arquivo e acompanham o numero do setor, sem
+     nada recalculado. A unica coluna que responde a simulacao e NOVA SEDE, com as cidades
+     dos bricks que o setor tem agora. LINHA ATUAL so muda quando voce converte a linha do
+     setor de proposito; sem conversao ela repete o arquivo. O detalhamento da simulacao
+     (bricks recebidos, cedidos, situacao, valores) fica na aba IMPACTO POR SETOR. */
   {
-    const head=['SETOR ESPELHO','REGIONAL','SETOR ANTIGO','SETOR NOVO','PLACA','VEÍCULO','NOME','Observação','DATA ADMISSÃO','LINHA ATUAL','STATUS','DDD','TELEFONE',
-      'SITUAÇÃO NA SIMULAÇÃO','EQUIPE ORIGINAL','BRICKS','BRICKS RECEBIDOS','BRICKS CEDIDOS','MÉDIA MÊS','YTD 26','EVOL YTD',mesLbl,'EVOL MÊS','NOVA SEDE'];
+    const head=['SETOR ESPELHO','REGIONAL','DE','PARA','PLACA','VEÍCULO','NOME','Observação',
+      'DATA ADMISSÃO','LINHA ATUAL','STATUS','DDD','TELEFONE','NOVA SEDE'];
     const nC=head.length;
     const rows=[head.map(h=>cS(h,XS.hdr))];
     const blank=(st)=>{const a=[];for(let c=0;c<nC;c++)a.push(cS('',st));return a;};
+    /* uma linha do arquivo, seja GR, GD ou PV, sempre nas mesmas 14 colunas */
+    const linhaArquivo=(d,num,nome,linhaTxt,sede,st,tone,obs)=>{
+      const v=[d?d.espelho:'',d?d.regional:'',d?d.antigo:'',num,
+        d?d.placa:'',d?d.veiculo:'',nome,obs!=null?obs:(d?d.obs:''),d?admStr(d.adm):'',
+        linhaTxt,d?d.statusTxt:'',d?d.ddd:'',d?d.tel:'',sede];
+      return v.map(x=>st!=null?cS(x==null?'':String(x),st):cT(x==null?'':String(x),tone||0));
+    };
     const gr=grDaSimulacao();
-    if(gr){
-      const a=blank(XS.gr);
-      const v=[gr.espelho,gr.regional,gr.antigo,gr.num,gr.placa,gr.veiculo,gr.nome,gr.obs,admStr(gr.adm),gr.linhaTxt,gr.statusTxt,gr.ddd,gr.tel];
-      v.forEach((x,i)=>a[i]=cS(x==null?'':String(x),XS.gr));
-      a[nC-1]=cS(gr.sede==null?'':String(gr.sede),XS.gr);
-      rows.push(a);
-    }
+    if(gr)rows.push(linhaArquivo(gr,gr.num,gr.nome,gr.linhaTxt,gr.sede,XS.gr));
+    const gdRows=(S.study&&S.study.gdRow instanceof Map)?S.study.gdRow:new Map();
     for(const team of S.teams){
-      const band=blank(XS.band);band[6]=cS(team.name,XS.band);
-      rows.push(band);
+      const gd=gdRows.get(team.num);
+      if(gd)rows.push(linhaArquivo(gd,gd.num,gd.nome,gd.linhaTxt,gd.sede,XS.band));
+      else{const band=blank(XS.band);band[6]=cS(team.name,XS.band);rows.push(band);}
       for(const i of team.sIdxs){
         const sx=S.setores[i];
         const d=S.studyByNum?S.studyByNum.get(sx.num):null;
-        const t=stM[i],ty=stY[i];
-        const obsParts=[];
-        if(d&&d.obs)obsParts.push(d.obs);
-        const sit=[];
-        if(S.teamOv.has(i)){obsParts.push('MOVIDO DE '+(sx.teamOrig||''));sit.push('EQUIPE ALTERADA');}
-        if(S.linhaOv.has(i)){obsParts.push('CONVERTIDO DE '+LNAME[sx.linha]+' PARA '+LNAME[efLinha(i)]);sit.push('LINHA CONVERTIDA');}
-        if(t.recv){obsParts.push('+'+t.recv+' bricks recebidos');sit.push('RECEBEU BRICKS');}
-        if(t.lost){obsParts.push('-'+t.lost+' bricks cedidos');sit.push('CEDEU BRICKS');}
-        const cfsX=S.linhaOv.has(i)?sectorConflicts(i):[];
-        const nConf=cfsX.length;
-        if(nConf){
-          const rev=confAceito(i,cfsX);
-          obsParts.push(nConf+' bricks em conflito'+(rev?' (revisados)':''));
-          sit.push(rev?'CONFLITO REVISADO':'CONFLITO');
-        }
-        if(sx.semVendas){obsParts.push('sem vendas na base');sit.push('SEM VENDAS');}
+        const t=stM[i];
         const changed=S.teamOv.has(i)||S.linhaOv.has(i)||t.recv||t.lost;
-        const tone=changed?1:0;
-        const media=ty.cur/nY;
-        const a=[];
-        const txt=[d?espelhoValidado(i,d.espelho):'',d?d.regional:'',d?d.antigo:'',String(sx.num),d?d.placa:'',d?d.veiculo:'',
-          sx.nomeEstudo||sx.nome,obsParts.join(' | '),d?admStr(d.adm):'',
-          LNAME[efLinha(i)],d?d.statusTxt:'',d?d.ddd:'',d?d.tel:'',
-          sit.length?sit.join(' + '):'MANTIDO',sx.teamOrig||''];
-        txt.forEach(x=>a.push(cT(x==null?'':String(x),tone)));
-        a.push(cN(t.nb,tone));
-        a.push(cN(t.recv||0,tone));
-        a.push(cN(t.lost||0,tone));
-        a.push(cN(media,media<MEDIA_MIN?4:tone));
-        a.push(cN(ty.cur,tone));
-        a.push(cP(evoFrac(ty.cur,ty.ref),tone));
-        a.push(cN(t.cur,tone));
-        a.push(cP(evoFrac(t.cur,t.ref),tone));
-        a.push(cT(sedeSimulada(i),tone));
-        rows.push(a);
+        /* conversao de linha e a unica anotacao da simulacao que entra nesta aba, e ela vem
+           depois da observacao do arquivo em vez de apagar a observacao */
+        const obs=[];
+        if(d&&d.obs)obs.push(String(d.obs));
+        if(S.linhaOv.has(i))obs.push('era linha '+LNAME[sx.linha]+' convertida para linha '+LNAME[efLinha(i)]);
+        rows.push(linhaArquivo(d,sx.num,sx.nomeEstudo||sx.nome,
+          LNAME[efLinha(i)],cidadesSimuladas(i),null,changed?1:0,obs.join(' | ')));
       }
       rows.push(blank(0));
     }
@@ -5242,21 +5250,15 @@ async function exportarSetorizacao(){
       rows.push(band);
       for(const[i,arr]of pendRows){
         const sx=S.setores[i],L=sx.linha;
-        let vm=0,vy=0;
-        for(const b of arr){vm+=bsM.cur[b*2+L];vy+=bsY.cur[b*2+L];}
-        const a=[];
-        const txt=['','','',String(sx.num),'','',sx.nome,arr.length+' bricks pendentes de realocação na linha '+LNAME[L],'',LNAME[L],'','','',
-          'SETOR ENCERRADO',teamBaseOf.get(i)||''];
-        txt.forEach(x=>a.push(cT(x,2)));
-        a.push(cN(arr.length,2));a.push(cN(0,2));a.push(cN(arr.length,2));
-        a.push(cN(vy/nY,2));a.push(cN(vy,2));a.push(cP(null,2));
-        a.push(cN(vm,2));a.push(cP(null,2));
-        a.push(cT(brickNamesTxt(arr),2));
+        const d=S.studyByNum?S.studyByNum.get(sx.num):null;
+        const a=linhaArquivo(d,sx.num,sx.nome,LNAME[L],cidadesTxt(arr),null,2,
+          arr.length+' bricks pendentes de realocação na linha '+LNAME[L]);
         rows.push(a);
       }
     }
+    /* larguras copiadas do arquivo oficial */
     sheets.push({name:'SETORIZACAO SIMULADA',xml:sheetXml(rows,
-      [13,9,12,11,10,24,34,44,14,15,8,6,12,26,14,8,10,10,13,14,10,13,10,110],nC)});
+      [11,14,12,28,11,36,48,75,15,15,12,9,14,255],nC)});
   }
 
   /* ===================== ABA 3: IMPACTO POR SETOR ===================== */
