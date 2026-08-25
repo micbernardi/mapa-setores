@@ -94,7 +94,7 @@ input,select{font-family:inherit}
 #tabs button.on{background:#fff;color:var(--txt);border-color:var(--border2);border-bottom-color:var(--txt);font-weight:700;box-shadow:0 -1px 3px rgba(38,50,60,.07)}
 #tabs button:focus-visible{outline:2px solid var(--inf);outline-offset:-2px}
 body.somapa #periodSeg,body.somapa #searchWrap,body.somapa #btnChanges,
-body.somapa #btnExportSet,body.somapa #btnReset,
+body.somapa #btnExportSet,body.somapa #btnExportEq,body.somapa #btnReset,
 body.somapa #tabs button[data-t="teams"],body.somapa #tabs button[data-t="marcas"]{display:none}
 
 /* ---------- teams ---------- */
@@ -411,6 +411,7 @@ body.mapaFull #cenBar{display:none}
     <button class="btn" id="btnNewFiles">Novos arquivos</button>
     <button class="btn" id="btnChanges">Alterações</button>
     <button class="btn" id="btnExportSet">Exportar setorização</button>
+    <button class="btn" id="btnExportEq" title="Planilha com as distritais e o faturamento de cada setor, no mesmo desenho da tela de distritais">Exportar equipes</button>
     <button class="btn danger" id="btnReset">Resetar simulação</button>
     <button class="btn danger" id="btnWipe" title="Apaga tudo o que este simulador guardou neste navegador">Limpar tudo</button>
   </div>
@@ -5092,10 +5093,16 @@ function abaDePara(){
     if(st.eff<0&&st.orig>=0)obs.push('BRICK A REALOCAR');
     else if(st.eff<0&&al)obs.push('SETOR DA RELAÇÃO NÃO ENCONTRADO NA BASE');
     else if(st.orig<0)obs.push('SEM SETOR ANTIGO NA BASE');
-    if(mudou&&S.setores[st.orig]&&S.setores[st.orig].extinto)obs.push('SETOR ANTIGO ENCERRADO');
     if(b<0)obs.push('BRICK DA RELAÇÃO FORA DA BASE DE VENDAS');
-    else if(bi&&bi.semVenda)obs.push('BRICK SEM VENDA NA BASE');
     if(b>=0&&!al&&st.orig<0&&st.eff<0&&alocPorBrick.size)obs.push('BRICK FORA DA RELAÇÃO DE DE/PARA');
+    /* setor convertido de linha na simulação: o de/para avisa em que linha ele estava e em
+       qual está agora, tanto para quem cedeu o brick quanto para quem recebeu */
+    for(const idx of[st.orig,st.eff]){
+      if(idx==null||idx<0||!S.setores[idx]||!S.linhaOv.has(idx))continue;
+      const t='SETOR '+S.setores[idx].num+' MUDOU DE LINHA: era '+LNAME[S.setores[idx].linha]
+        +', virou '+LNAME[efLinha(idx)];
+      if(obs.indexOf(t)<0)obs.push(t);
+    }
     /* SETOR NOVO sai sempre com o dono final do brick: onde a simulacao trocou, o destino;
        onde nao mexeu, repete o setor antigo, para a coluna servir de cadastro completo.
        So fica vazia quando o brick esta mesmo sem dono (setor encerrado sem realocacao ou
@@ -5491,6 +5498,103 @@ async function baixarXlsx(sheets,nome){
   a.download=nome;
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+}
+
+/* ===================== EXPORTAR EQUIPES =====================
+   Repete no Excel o que a tela de distritais mostra: uma faixa por distrital com o total
+   dela e, abaixo, uma linha por setor com bricks, media mes, mes fechado, YTD e as duas
+   evolucoes contra o ano anterior. Os numeros saem das mesmas funcoes da tela, e nao do
+   periodo selecionado no topo, para a planilha sair sempre igual. Setor encerrado entra
+   na lista com valor zero e o motivo na coluna de observacoes: ele ainda pertence a
+   distrital ate os bricks serem repassados. */
+$('btnExportEq').onclick=async()=>{
+  if(typeof JSZip==='undefined'){toast('Biblioteca de exportação ainda carregando, tente novamente');return;}
+  if(!S.setores||!S.setores.length){toast('Carregue a base de vendas antes de exportar');return;}
+  toast('Gerando planilha de equipes...');
+  await new Promise(r=>setTimeout(r,30));
+  try{
+    await exportarEquipes();
+  }catch(err){
+    console.error('Exportar equipes:',err);
+    toast('Não consegui exportar: '+(err&&err.message?err.message:err));
+  }
+};
+async function exportarEquipes(){
+  const bsM=computeBrickSums('mes'),bsY=computeBrickSums('ytd');
+  const stM=computeSectorTotals(bsM),stY=computeSectorTotals(bsY);
+  const nY=bsY.pd.cur.length||1;
+  const mesLbl=bsM.pd.lbl;
+  const evoMesLbl='EVO '+mesLbl.toUpperCase();
+  const head=['SETOR','NOME','LINHA','BRICKS','RECEBEU','CEDEU','MÉDIA MÊS',
+    mesLbl.toUpperCase(),evoMesLbl,'YTD '+bsY.pd.lbl.replace(/^YTD\s*/i,''),'EVO YTD','OBSERVAÇÕES'];
+  const nC=head.length;
+  const larg=[11,34,11,9,10,9,14,14,11,15,11,40];
+  /* o que a tela mostra como etiqueta ao lado do nome vira texto na coluna de observacoes */
+  const obsDe=(i,media)=>{
+    const s=S.setores[i],o=[];
+    if(s.extinto)o.push('ENCERRADO NO ESTUDO');
+    if(S.linhaOv.has(i))o.push('CONVERTIDO PARA '+LNAME[efLinha(i)]);
+    if(S.reativOv.has(i))o.push('REATIVADO');
+    if(S.teamOv.has(i))o.push('MOVIDO DE '+(s.teamOrig||''));
+    if(s.semVendas)o.push('SEM VENDAS NA BASE');
+    if(!s.extinto&&media<MEDIA_MIN)o.push('ABAIXO DO PISO');
+    return o.join(' | ');
+  };
+  const linhaSetor=i=>{
+    const s=S.setores[i],m=stM[i],y=stY[i];
+    const media=y.cur/nY;
+    const baixo=!s.extinto&&media<MEDIA_MIN;
+    const tone=s.extinto?2:(S.linhaOv.has(i)||S.teamOv.has(i)?1:0);
+    return[cT(String(s.num),tone),cT(s.nomeEstudo||s.nome,tone),cT(LNAME[efLinha(i)],tone),
+      cN(m.nb,tone),cN(m.recv||0,tone),cN(m.lost||0,tone),
+      cN(media,baixo?2:tone),cN(m.cur,tone),cP(evoFrac(m.cur,m.ref),tone),
+      cN(y.cur,tone),cP(evoFrac(y.cur,y.ref),tone),cT(obsDe(i,media),tone)];
+  };
+
+  /* ---------- aba EQUIPES ---------- */
+  const rows=[head.map(h=>cS(h,XS.hdr))];
+  const resumo=[];
+  let gB=0,gM=0,gMr=0,gY=0,gYr=0;
+  for(const team of S.teams){
+    let tb=0,tm=0,tmr=0,ty=0,tyr=0;
+    for(const i of team.sIdxs){
+      tb+=stM[i].nb;tm+=stM[i].cur;tmr+=stM[i].ref;ty+=stY[i].cur;tyr+=stY[i].ref;
+    }
+    gB+=tb;gM+=tm;gMr+=tmr;gY+=ty;gYr+=tyr;
+    const banda=[cS(team.name,XS.band),
+      cS(team.sIdxs.length+(team.sIdxs.length===1?' setor':' setores'),XS.band),
+      cS('',XS.band),cNs(tb,XS.bnum),cS('',XS.band),cS('',XS.band),
+      cNs(ty/nY,XS.bnum),cNs(tm,XS.bnum),cP(evoFrac(tm,tmr),0),
+      cNs(ty,XS.bnum),cP(evoFrac(ty,tyr),0),cS('',XS.band)];
+    rows.push(banda);
+    // dentro da distrital, a ordem e a mesma da tela
+    for(const i of team.sIdxs)rows.push(linhaSetor(i));
+    rows.push([]);   // linha em branco separando as distritais
+    resumo.push({nome:team.name,n:team.sIdxs.length,tb,tm,tmr,ty,tyr});
+  }
+  const geral=[cS('TOTAL GERAL',XS.btxt),
+    cS(S.teams.length+' distritais',XS.btxt),cS('',XS.btxt),cNs(gB,XS.bnum),
+    cS('',XS.btxt),cS('',XS.btxt),cNs(gY/nY,XS.bnum),cNs(gM,XS.bnum),
+    cP(evoFrac(gM,gMr),0),cNs(gY,XS.bnum),cP(evoFrac(gY,gYr),0),cS('',XS.btxt)];
+  rows.push(geral);
+  const sheets=[{name:'EQUIPES',xml:sheetXml(rows,larg,0)}];
+
+  /* ---------- aba RESUMO EQUIPES ---------- */
+  {
+    const h2=['DISTRITAL','SETORES','BRICKS','MÉDIA MÊS',mesLbl.toUpperCase(),evoMesLbl,
+      'YTD '+bsY.pd.lbl.replace(/^YTD\s*/i,''),'EVO YTD','PARTICIPAÇÃO YTD'];
+    const r2=[h2.map(h=>cS(h,XS.hdr))];
+    for(const t of resumo)r2.push([cT(t.nome,0),cN(t.n,0),cN(t.tb,0),cN(t.ty/nY,0),
+      cN(t.tm,0),cP(evoFrac(t.tm,t.tmr),0),cN(t.ty,0),cP(evoFrac(t.ty,t.tyr),0),
+      cP(gY>0?t.ty/gY:null,0)]);
+    r2.push([cS('TOTAL',XS.btxt),cNs(S.teams.length,XS.bnum),cNs(gB,XS.bnum),
+      cNs(gY/nY,XS.bnum),cNs(gM,XS.bnum),cP(evoFrac(gM,gMr),0),cNs(gY,XS.bnum),
+      cP(evoFrac(gY,gYr),0),cP(gY>0?1:null,0)]);
+    sheets.push({name:'RESUMO EQUIPES',xml:sheetXml(r2,[40,10,9,14,14,11,15,11,17],h2.length)});
+  }
+
+  await baixarXlsx(sheets,'EQUIPES_FATURAMENTO_AGO26.xlsx');
+  toast('Planilha de equipes exportada');
 }
 
 /* =================== MAPA INTEGRADO =================== */
