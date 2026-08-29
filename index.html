@@ -785,7 +785,7 @@ const UFOUT={"AC":["zxwg@`u~DosBvp@xC`YpxCvyArq@zbAfYhEnKrc@xfAzT|VrZpzAcJ{Arb@v
 const $=id=>document.getElementById(id);
 const LS_KEY='simulador_setorizacao_ago26';
 const LNAME=['PRIME','INFINITY'];
-const MEDIA_MIN=119886; // piso de media mensal (YTD/6)
+const MEDIA_MIN=119886; // venda mensal minima para o setor ser rentavel (valor por mes, nao muda com o numero de meses da base)
 const LKEY=['P','I'];
 
 const S={
@@ -1070,15 +1070,17 @@ function estudoSheetScore(n){
    com SETOR ANTIGO e SETOR NOVO, e o da planilha oficial de setorizacao (SETORIZAcaO 2026,
    aba de ciclo), que usa DE e PARA. Os dois viram o mesmo ci, entao o resto do parser
    nao muda. */
+function hdEstudo(c){return String(c||'').replace(/\s*\([^)]*\)\s*$/,'').trim();}
 function mapEstudoCols(cols,ci){
-  cols.forEach((c,i)=>{
-    if(c==='SETOR ESPELHO')ci.esp=i;
+  cols.forEach((c0,i)=>{
+    const c=hdEstudo(c0);
+    if(c.startsWith('SETOR ESPELHO'))ci.esp=i;
     else if(c.startsWith('SETOR ANTIGO')||c==='DE')ci.ant=i;
     else if(c.startsWith('SETOR NOVO')||c==='PARA')ci.novo=i;
     else if(c==='NOME')ci.nome=i;
     else if(c.startsWith('LINHA'))ci.linha=i;
     else if(c==='STATUS')ci.status=i;
-    else if(c==='NOVA SEDE')ci.sede=i;
+    else if(c==='NOVA SEDE'||c==='SEDE')ci.sede=i;
     else if(c==='REGIONAL')ci.reg=i;
     else if(c==='PLACA')ci.placa=i;
     else if(c.startsWith('VEICULO'))ci.veic=i;
@@ -1092,18 +1094,21 @@ function mapEstudoCols(cols,ci){
 function findEstudoHeader(rows){
   let hIdx=-1,ci={};
   const lim=Math.min(rows.length,10);
+  /* o titulo pode vir com um complemento entre parenteses, como "DE (NUMERACAO ANTIGA)" na
+     planilha oficial: hdEstudo tira esse rabicho antes de comparar, senao a aba de numeracao
+     nao e reconhecida e o simulador fica sem equipe nenhuma */
   for(let r=0;r<lim;r++){
-    const cols=(rows[r]||[]).map(c=>normTxt(c));
-    if(cols.some(c=>c.startsWith('SETOR NOVO'))){hIdx=r;mapEstudoCols(cols,ci);break;}
+    const cols=(rows[r]||[]).map(c=>hdEstudo(normTxt(c)));
+    if(cols.some(c=>c.startsWith('SETOR NOVO'))){hIdx=r;mapEstudoCols((rows[r]||[]).map(c=>normTxt(c)),ci);break;}
   }
   /* DE/PARA so vale como aba de numeracao quando vem acompanhado de NOME e de DE ou
      SETOR ESPELHO: sozinha, uma coluna PARA pode ser qualquer outra coisa */
   if(hIdx<0){
     for(let r=0;r<lim;r++){
-      const cols=(rows[r]||[]).map(c=>normTxt(c));
+      const cols=(rows[r]||[]).map(c=>hdEstudo(normTxt(c)));
       if(cols.indexOf('PARA')>=0&&cols.indexOf('NOME')>=0
-        &&(cols.indexOf('DE')>=0||cols.indexOf('SETOR ESPELHO')>=0)){
-        hIdx=r;mapEstudoCols(cols,ci);break;
+        &&(cols.indexOf('DE')>=0||cols.some(c=>c.startsWith('SETOR ESPELHO')))){
+        hIdx=r;mapEstudoCols((rows[r]||[]).map(c=>normTxt(c)),ci);break;
       }
     }
   }
@@ -1707,9 +1712,10 @@ function buildTeams(){
   S.extintos=[];
   S.restIdx=rest.slice();
   S.restSet=new Set(rest);
-  S.extStudy={nums:[],names:[]};
+  S.extStudy={nums:[],names:[],itens:[]};
   if(S.study){
     for(const x of(S.study.extintos||[])){
+      S.extStudy.itens.push(x);
       if(x.novo)S.extStudy.nums.push(x.novo);
       if(x.ant)S.extStudy.nums.push(x.ant);
       const kn=nmKey(x.nome);
@@ -1744,8 +1750,8 @@ function extLista(){
     if(v&&!v.length)return extListaPadrao();
     if(v){
       const lista=v.map(x=>({num:+x.num||0,nome:String(x.nome||'')}));
-      // quem so tinha o padrao antigo salvo recebe o corrigido; edicoes proprias ficam
-      if(Array.isArray(raw)&&extListaIgual(lista,EXT_2026_V1)){
+      // quem so tinha um padrao antigo salvo recebe o atual; edicoes proprias ficam
+      if(extListaIgual(lista,EXT_2026_V1)||extListaIgual(lista,EXT_2026_V2)){
         extListaSalvar(extListaPadrao());
         return extListaPadrao();
       }
@@ -1783,16 +1789,27 @@ function extListaParse(txt){
    o encerramento so pelo arquivo. Quando o setor nao estiver na base carregada, nao aparece.
    A tela permite editar a lista, e a edicao salva no navegador tem prioridade sobre esta. */
 const EXT_2026=[
-  {num:101008,nome:'FABIO MARTINEZ CUNHA'},
-  {num:102003,nome:'ALINE GOMES SCHOENARDIE'},
-  {num:102103,nome:'GUILHERME GARCIA VIDAL'},
-  {num:102107,nome:'LUCAS LIAL NUNES'},
-  {num:104102,nome:'BRUNO MERLINI DAVID'},
-  {num:104106,nome:'RAFAEL REGIS DA SILVA'},
-  {num:105009,nome:'JHON PETTER DA SILVA'},
-  {num:105102,nome:'JACSON KRUGER'},
-  {num:105104,nome:'CLEIA CARLA KOCHEM'},
-  {num:105106,nome:'RAPHAEL IGNACIO PEREIRA'},
+  {num:101090,nome:'FABIO MARTINEZ CUNHA'},
+  {num:102090,nome:''},
+  {num:102190,nome:'GUILHERME GARCIA VIDAL'},
+  {num:102191,nome:'LUCAS LIAL NUNES'},
+  {num:103190,nome:'AMANDA CAROLINA FERREIRA ALVES'},
+  {num:103191,nome:'DOUGLAS KOCHHANN'},
+  {num:104190,nome:'BRUNO MERLINI DAVID'},
+  {num:104191,nome:'RAFAEL REGIS DA SILVA'},
+  {num:105090,nome:'JHON PETTER DA SILVA'},
+  {num:105091,nome:''},
+  {num:105092,nome:'CLEIA CARLA KOCHEM'},
+  {num:105093,nome:'RAPHAEL IGNACIO PEREIRA'},
+  {num:105190,nome:'JEMOEL PAULO NANTES'},
+];
+/* padrao do ciclo anterior, na numeracao antiga */
+const EXT_2026_V2=[
+  {num:101008,nome:'FABIO MARTINEZ CUNHA'},{num:102003,nome:'ALINE GOMES SCHOENARDIE'},
+  {num:102103,nome:'GUILHERME GARCIA VIDAL'},{num:102107,nome:'LUCAS LIAL NUNES'},
+  {num:104102,nome:'BRUNO MERLINI DAVID'},{num:104106,nome:'RAFAEL REGIS DA SILVA'},
+  {num:105009,nome:'JHON PETTER DA SILVA'},{num:105102,nome:'JACSON KRUGER'},
+  {num:105104,nome:'CLEIA CARLA KOCHEM'},{num:105106,nome:'RAPHAEL IGNACIO PEREIRA'},
 ];
 /* lista padrao anterior, com o numero errado da CLEIA. serve para reconhecer quem tinha
    apenas o padrao salvo no navegador e trocar pelo corrigido, sem apagar edicoes proprias. */
@@ -1817,6 +1834,20 @@ function extListaIgual(a,b){
    roda de novo sempre que a lista muda, sem reprocessar os arquivos. */
 const NM_STOP=new Set(['DE','DA','DO','DOS','DAS','E','VAGO','DEVOLVIDO']);
 function nmFirst(s){const t=nmKey(s).split(' ').filter(x=>x&&!NM_STOP.has(x));return t[0]||'';}
+/* Um item da aba de extintos so encerra um setor quando o numero E a pessoa batem. Na
+   renumeracao o numero antigo de quem saiu costuma ser reaproveitado por outra pessoa, e
+   sem esta checagem o simulador encerrava o setor novo no lugar do antigo. Quando o item
+   nao traz nome, o numero volta a decidir sozinho. */
+function extCasaItem(s,kn,knE,itens,extNames){
+  if(extNames.has(kn)||(knE&&extNames.has(knE)))return true;
+  for(const x of itens){
+    const nums=[x.novo,x.ant].filter(Boolean);
+    if(nums.indexOf(s.num)<0&&!(s.numAntigo&&nums.indexOf(s.numAntigo)>=0))continue;
+    const f1=nmFirst(x.nome||''),f2=nmFirst(s.nomeEstudo||s.nome);
+    if(!f1||!f2||f1===f2)return true;
+  }
+  return false;
+}
 function classificarSetores(){
   if(!S.setores||!S.setores.length)return;
   for(const s of S.setores){s.extinto=false;s.extintoBase=false;s.foraEscopo=false;s.extintoLista=false;}
@@ -1858,7 +1889,7 @@ function classificarSetores(){
       if(f1&&f2&&f1!==f2){
         // o numero bate mas e outra pessoa: nao encerra ninguem no escuro
         S.extAviso.push({num:x.num,nome:x.nome,base:S.setores[i].nomeEstudo||S.setores[i].nome,
-          outro:j!==undefined?S.setores[j].num:0});
+          outro:j!==undefined?S.setores[j].num:0,aplicado:j!==undefined});
         if(j===undefined)continue;   // ja avisamos, nao repetir como "nao encontrado"
         i=undefined;
       }
@@ -1871,13 +1902,21 @@ function classificarSetores(){
     }
     alvo.add(i);
   }
-  const extNums=new Set(S.extStudy?S.extStudy.nums:[]),extNames=new Set(S.extStudy?S.extStudy.names:[]);
+  const extNames=new Set(S.extStudy?S.extStudy.names:[]);
+  const extItens=(S.extStudy&&S.extStudy.itens)?S.extStudy.itens:[];
   /* Regionais cobertas pela setorizacao carregada. Setor que existe na base de vendas, cai
      numa regional coberta e nao aparece no arquivo, foi encerrado na reestruturacao: entra
      como encerrado para os bricks dele irem para a fila de realocacao. Setor de regional que
      nao foi carregada nao vira encerrado, so fica fora do escopo. */
   const regsEstudo=new Set();
-  if(S.study)for(const t of S.study.teams)for(const s of t.sectors)regsEstudo.add(regDe(s.num));
+  /* alem da regional do numero novo, entra a regional do numero antigo: quando uma regional
+     inteira e absorvida por outra (503xxx virando 103xxx/105xxx), os setores dela que nao
+     tem PARA precisam continuar sendo encerrados, e nao "fora do escopo" */
+  if(S.study)for(const t of S.study.teams)for(const s of t.sectors){
+    regsEstudo.add(regDe(s.num));
+    const a=parseInt(s.antigo,10);
+    if(a)regsEstudo.add(regDe(a));
+  }
   S.extListaN=0;S.extRegional=0;S.extArquivo=0;S.foraEscopoN=0;
   S.diagEnc={semEstudo:!S.study,
     regsBase:[...regsBase].sort((a,b)=>a-b),
@@ -1889,8 +1928,7 @@ function classificarSetores(){
     const kn=nmKey(s.nome),knE=nmKey(s.nomeEstudo||'');
     /* o arquivo manda, mesmo quando o setor foi casado com o estudo: quem esta na aba de
        extintos, tem status de encerrado ou ficou sem nenhum brick continua encerrado */
-    if(extNums.has(s.num)||(s.numAntigo&&extNums.has(s.numAntigo))
-       ||extNames.has(kn)||(knE&&extNames.has(knE))){s.extintoBase=true;S.extArquivo++;continue;}
+    if(extCasaItem(s,kn,knE,extItens,extNames)){s.extintoBase=true;S.extArquivo++;continue;}
     if(!sobrou||!S.study)continue;   // sem estudo nao existe "fora do escopo"
     if(regsEstudo.has(regDe(s.num))){s.extintoBase=true;S.extRegional++;}
     else {s.foraEscopo=true;S.foraEscopoN++;}
@@ -1919,8 +1957,9 @@ function extAvisoLinhas(){
   if(!S.extAviso||!S.extAviso.length)return[];
   return S.extAviso.map(a=>{
     const q=(a.num?a.num:'')+(a.num&&a.nome?' - ':'')+(a.nome||'');
-    if(a.base===null)return q+': não existe na base de vendas, não há bricks para realocar';
-    return q+': na base o setor '+a.num+' é '+a.base+(a.outro?', e esse nome está no setor '+a.outro:', e esse nome não aparece na base');
+    if(a.base===null)return{aplicado:false,txt:q+': não existe na base de vendas, não há bricks para realocar'};
+    if(a.aplicado)return{aplicado:true,txt:q+': o número mudou na renumeração, encerrado pelo nome no setor '+a.outro};
+    return{aplicado:false,txt:q+': na base o setor '+a.num+' é '+a.base+', e esse nome não aparece na base'};
   });
 }
 function applyStatusOv(){
@@ -2587,7 +2626,9 @@ function renderPending(pd){
   }
   html+='</details>';
   const av=extAvisoLinhas();
-  if(av.length)html+=`<div class="pendwarn"><b>${av.length} item(ns) da lista não foram aplicados.</b> ${av.map(esc).join(' · ')} <button class="linkbtn" onclick="openExtLista()">corrigir a lista</button></div>`;
+  const avOk=av.filter(a=>a.aplicado),avNao=av.filter(a=>!a.aplicado);
+  if(avNao.length)html+=`<div class="pendwarn"><b>${avNao.length} item(ns) da lista não foram aplicados.</b> ${avNao.map(a=>esc(a.txt)).join(' · ')} <button class="linkbtn" onclick="openExtLista()">corrigir a lista</button></div>`;
+  if(avOk.length)html+=`<div class="pendwarn"><b>${avOk.length} item(ns) da lista foram aplicados pelo nome.</b> ${avOk.map(a=>esc(a.txt)).join(' · ')} <button class="linkbtn" onclick="openExtLista()">atualizar a lista</button></div>`;
   return html;
 }
 function togglePendSel(b,L,on){
@@ -5356,8 +5397,12 @@ async function exportarSetorizacao(){
 
   /* ===================== ABA 4: BRICKS (configuracao nova) ===================== */
   {
+    /* o YTD do ano anterior por brick sai do mesmo computeBrickSums, no campo ref; sem ele
+       nao da para calcular evolucao nem share do ano passado no nivel do brick */
+    const ytdBLbl='YTD '+bsY.pd.lbl.replace(/^YTD\s*/i,'');
+    const ytdBAntLbl=bsY.pd.refLbl.replace(/^vs\s*/i,'')||'YTD ANT';
     const head=['LINHA','BRICK','CIDADE','SITUAÇÃO','SETOR ORIGEM','NOME ORIGEM','EQUIPE ORIGEM','SETOR DESTINO','NOME DESTINO','EQUIPE DESTINO',
-      mesLbl,'TRI','YTD 26','MAT','MÉDIA MÊS'];
+      mesLbl,'TRI',ytdBAntLbl,ytdBLbl,'MAT','MÉDIA MÊS'];
     const nC=head.length;
     const rows=[head.map(h=>cS(h,XS.hdr))];
     for(let L=0;L<2;L++){
@@ -5381,13 +5426,72 @@ async function exportarSetorizacao(){
         a.push(cT(st.eff>=0?(teamOf.get(st.eff)||''):'',tone));
         a.push(cN(vm,tone));
         a.push(cN(bsT.cur[q],tone));
+        a.push(cN(bsY.ref[q],tone));
         a.push(cN(vy,tone));
         a.push(cN(bsA.cur[q],tone));
         a.push(cN(vy/nY,tone));
         rows.push(a);
       }
     }
-    sheets.push({name:'BRICKS',xml:sheetXml(rows,[11,34,26,28,13,30,14,14,30,15,13,13,13,13,13],nC)});
+    sheets.push({name:'BRICKS',xml:sheetXml(rows,[11,34,26,28,13,30,14,14,30,15,13,13,13,13,13,13],nC)});
+  }
+
+  /* ============ ABA 4B: BRICK X PRODUTO (YTD anterior e atual) ============
+     Uma linha por combinacao brick + marca, com o YTD do ano passado e o do ano corrente.
+     E o nivel mais fino que a base de vendas guarda, e e o que permite refazer qualquer
+     recorte de marcas fora do simulador sem precisar reprocessar a base inteira.
+     A aba e montada em XML direto, e nao pelo sheetXml, porque aqui sao centenas de
+     milhares de linhas e construir um objeto por celula estoura a memoria do navegador. */
+  {
+    const pdY=bsY.pd;
+    const stride=S.nM+3;
+    const ytdLbl2='YTD '+pdY.lbl.replace(/^YTD\s*/i,'');
+    const ytdAnt2=pdY.refLbl.replace(/^vs\s*/i,'')||'YTD ANT';
+    const head=['LINHA','BRICK','CIDADE','SETOR DESTINO','NOME DESTINO','PRODUTO','MARCA',
+      ytdAnt2,ytdLbl2,'EVO YTD'];
+    const larg=[11,34,26,14,32,30,12,15,15,12];
+    const S_HDR=XS.hdr, S_TXT=xf(0,0), S_MOE=xf(0,3), S_PCT=xf(0,2);
+    const parts=[];
+    let cells='';
+    for(let c=0;c<head.length;c++)
+      cells+='<c r="'+colRef(c)+'1" t="inlineStr" s="'+S_HDR+'"><is><t xml:space="preserve">'+xesc(head[c])+'</t></is></c>';
+    parts.push('<row r="1">'+cells+'</row>');
+    // texto do brick e do setor resolvido uma vez so, para nao repetir trabalho por combinacao
+    const bTxt=S.bricks.map(b=>xesc(b.name));
+    const bCid=S.bricks.map(b=>xesc(b.city||''));
+    const mTxt=S.marcas.map(m=>xesc(m.name));
+    const sNumT=S.setores.map(s=>xesc(String(s.num)));
+    const sNomT=S.setores.map(s=>xesc(s.nomeEstudo||s.nome||''));
+    let r=1,n=0;
+    for(let i=0;i<S.nCombos;i++){
+      const m=S.mArr[i],b=S.bArr[i];
+      const o=i*stride;
+      let cur=0;for(const ix of pdY.cur)cur+=S.vArr[o+ix];
+      const ref=pdY.hist>=0?S.vArr[o+S.nM+pdY.hist]:0;
+      if(cur===0&&ref===0)continue;
+      const L=linhaOf(m);
+      const s=sectorOf(b,L);
+      const temS=s>=0&&S.setores[s];
+      r++;n++;
+      const ev=(ref&&isFinite(ref))?(cur/ref-1):null;
+      let c='';
+      const T=(col,v)=>{c+='<c r="'+colRef(col)+r+'" t="inlineStr" s="'+S_TXT+'"><is><t xml:space="preserve">'+v+'</t></is></c>';};
+      const N=(col,v,st)=>{if(v!=null&&isFinite(v))c+='<c r="'+colRef(col)+r+'" s="'+st+'"><v>'+v+'</v></c>';};
+      T(0,LNAME[L]); T(1,bTxt[b]); T(2,bCid[b]);
+      T(3,temS?sNumT[s]:''); T(4,temS?sNomT[s]:'');
+      T(5,mTxt[m]); T(6,S.marcaOff.has(m)?'EXCLUIDA':'ATIVA');
+      N(7,ref,S_MOE); N(8,cur,S_MOE); N(9,ev,S_PCT);
+      parts.push('<row r="'+r+'">'+c+'</row>');
+    }
+    const cols='<cols>'+larg.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('')+'</cols>';
+    const xml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+      +'<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+      +'<sheetFormatPr defaultRowHeight="14.5"/>'+cols
+      +'<sheetData>'+parts.join('')+'</sheetData>'
+      +'<autoFilter ref="A1:'+colRef(head.length-1)+'1"/></worksheet>';
+    sheets.push({name:'BRICK X PRODUTO',xml});
+    S.detProdN=n;
   }
 
   /* ===================== ABA 5: ALTERACOES ===================== */
@@ -5483,7 +5587,7 @@ async function exportarSetorizacao(){
 
   /* ===================== empacotar ===================== */
   await baixarXlsx(sheets,'SETORIZACAO_SIMULADA_AGO26.xlsx');
-  toast('Setorização simulada exportada');
+  toast('Setorização simulada exportada'+(S.detProdN?' · '+S.detProdN.toLocaleString('pt-BR')+' linhas na aba BRICK X PRODUTO':''));
 }
 /* monta o pacote OOXML a partir das abas e devolve o blob do arquivo */
 async function montarXlsx(sheets){
@@ -5539,10 +5643,14 @@ async function exportarEquipes(){
   const nY=bsY.pd.cur.length||1;
   const mesLbl=bsM.pd.lbl;
   const evoMesLbl='EVO '+mesLbl.toUpperCase();
+  /* o YTD do ano anterior ja vem calculado em stY[i].ref; so faltava sair na planilha,
+     e sem ele nao da para reproduzir evolucao e share do ano passado fora do simulador */
+  const ytdLbl='YTD '+bsY.pd.lbl.replace(/^YTD\s*/i,'');
+  const ytdAntLbl=bsY.pd.refLbl.replace(/^vs\s*/i,'')||'YTD ANT';
   const head=['SETOR','NOME','LINHA','BRICKS','RECEBEU','CEDEU','MÉDIA MÊS',
-    mesLbl.toUpperCase(),evoMesLbl,'YTD '+bsY.pd.lbl.replace(/^YTD\s*/i,''),'EVO YTD','OBSERVAÇÕES'];
+    mesLbl.toUpperCase(),evoMesLbl,ytdAntLbl,ytdLbl,'EVO YTD','OBSERVAÇÕES'];
   const nC=head.length;
-  const larg=[11,34,11,9,10,9,14,14,11,15,11,40];
+  const larg=[11,34,11,9,10,9,14,14,11,15,15,11,40];
   /* o que a tela mostra como etiqueta ao lado do nome vira texto na coluna de observacoes */
   const obsDe=(i,media)=>{
     const s=S.setores[i],o=[];
@@ -5562,7 +5670,7 @@ async function exportarEquipes(){
     return[cT(String(s.num),tone),cT(s.nomeEstudo||s.nome,tone),cT(LNAME[efLinha(i)],tone),
       cN(m.nb,tone),cN(m.recv||0,tone),cN(m.lost||0,tone),
       cM(media,baixo?2:tone),cM(m.cur,tone),cP(evoFrac(m.cur,m.ref),tone),
-      cM(y.cur,tone),cP(evoFrac(y.cur,y.ref),tone),cT(obsDe(i,media),tone)];
+      cM(y.ref,tone),cM(y.cur,tone),cP(evoFrac(y.cur,y.ref),tone),cT(obsDe(i,media),tone)];
   };
 
   /* ---------- aba EQUIPES ---------- */
@@ -5579,7 +5687,7 @@ async function exportarEquipes(){
       cS(team.sIdxs.length+(team.sIdxs.length===1?' setor':' setores'),XS.band),
       cS('',XS.band),cNs(tb,XS.bnum),cS('',XS.band),cS('',XS.band),
       cNs(ty/nY,XS.bmoeda),cNs(tm,XS.bmoeda),cP(evoFrac(tm,tmr),0),
-      cNs(ty,XS.bmoeda),cP(evoFrac(ty,tyr),0),cS('',XS.band)];
+      cNs(tyr,XS.bmoeda),cNs(ty,XS.bmoeda),cP(evoFrac(ty,tyr),0),cS('',XS.band)];
     rows.push(banda);
     // dentro da distrital, a ordem e a mesma da tela
     for(const i of team.sIdxs)rows.push(linhaSetor(i));
@@ -5589,27 +5697,27 @@ async function exportarEquipes(){
   const geral=[cS('TOTAL GERAL',XS.btxt),
     cS(S.teams.length+' distritais',XS.btxt),cS('',XS.btxt),cNs(gB,XS.bnum),
     cS('',XS.btxt),cS('',XS.btxt),cNs(gY/nY,XS.bmoeda),cNs(gM,XS.bmoeda),
-    cP(evoFrac(gM,gMr),0),cNs(gY,XS.bmoeda),cP(evoFrac(gY,gYr),0),cS('',XS.btxt)];
+    cP(evoFrac(gM,gMr),0),cNs(gYr,XS.bmoeda),cNs(gY,XS.bmoeda),cP(evoFrac(gY,gYr),0),cS('',XS.btxt)];
   rows.push(geral);
-  // colunas I (evo do mês) e K (evo YTD), da primeira linha de dados até o total geral
+  // colunas I (evo do mês) e L (evo YTD), da primeira linha de dados até o total geral
   const ult=rows.length;
-  const cf1=cfEvo('I2:I'+ult,1)+cfEvo('K2:K'+ult,4);
+  const cf1=cfEvo('I2:I'+ult,1)+cfEvo('L2:L'+ult,4);
   const sheets=[{name:'EQUIPES',xml:sheetXml(rows,larg,0,cf1)}];
 
   /* ---------- aba RESUMO EQUIPES ---------- */
   {
     const h2=['DISTRITAL','SETORES','BRICKS','MÉDIA MÊS',mesLbl.toUpperCase(),evoMesLbl,
-      'YTD '+bsY.pd.lbl.replace(/^YTD\s*/i,''),'EVO YTD','PARTICIPAÇÃO YTD'];
+      ytdAntLbl,ytdLbl,'EVO YTD','PARTICIPAÇÃO YTD'];
     const r2=[h2.map(h=>cS(h,XS.hdr))];
     for(const t of resumo)r2.push([cT(t.nome,0),cN(t.n,0),cN(t.tb,0),cM(t.ty/nY,0),
-      cM(t.tm,0),cP(evoFrac(t.tm,t.tmr),0),cM(t.ty,0),cP(evoFrac(t.ty,t.tyr),0),
+      cM(t.tm,0),cP(evoFrac(t.tm,t.tmr),0),cM(t.tyr,0),cM(t.ty,0),cP(evoFrac(t.ty,t.tyr),0),
       cP(gY>0?t.ty/gY:null,0)]);
     r2.push([cS('TOTAL',XS.btxt),cNs(S.teams.length,XS.bnum),cNs(gB,XS.bnum),
-      cNs(gY/nY,XS.bmoeda),cNs(gM,XS.bmoeda),cP(evoFrac(gM,gMr),0),cNs(gY,XS.bmoeda),
-      cP(evoFrac(gY,gYr),0),cP(gY>0?1:null,0)]);
-    // colunas F (evo do mês) e H (evo YTD); a participação fica sem cor, é sempre positiva
-    const cf2=cfEvo('F2:F'+r2.length,1)+cfEvo('H2:H'+r2.length,4);
-    sheets.push({name:'RESUMO EQUIPES',xml:sheetXml(r2,[40,10,9,14,14,11,15,11,17],h2.length,cf2)});
+      cNs(gY/nY,XS.bmoeda),cNs(gM,XS.bmoeda),cP(evoFrac(gM,gMr),0),cNs(gYr,XS.bmoeda),
+      cNs(gY,XS.bmoeda),cP(evoFrac(gY,gYr),0),cP(gY>0?1:null,0)]);
+    // colunas F (evo do mês) e I (evo YTD); a participação fica sem cor, é sempre positiva
+    const cf2=cfEvo('F2:F'+r2.length,1)+cfEvo('I2:I'+r2.length,4);
+    sheets.push({name:'RESUMO EQUIPES',xml:sheetXml(r2,[40,10,9,14,14,11,15,15,11,17],h2.length,cf2)});
   }
 
   await baixarXlsx(sheets,'EQUIPES_FATURAMENTO_AGO26.xlsx');
