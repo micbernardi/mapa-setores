@@ -411,7 +411,7 @@ body.mapaFull #cenBar{display:none}
     <button class="btn" id="btnNewFiles">Novos arquivos</button>
     <button class="btn" id="btnChanges">Alterações</button>
     <button class="btn" id="btnExportSet">Exportar setorização</button>
-    <button class="btn" id="btnExportEq" title="Planilha com as distritais e o faturamento de cada setor, no mesmo desenho da tela de distritais">Exportar equipes</button>
+    <button class="btn" id="btnExportEq" title="Planilha com as distritais e o faturamento de cada setor, no mesmo desenho da tela de distritais, mais a aba de de/para com todos os bricks e o setor de origem e de destino">Exportar equipes</button>
     <button class="btn danger" id="btnReset">Resetar simulação</button>
     <button class="btn danger" id="btnWipe" title="Apaga tudo o que este simulador guardou neste navegador">Limpar tudo</button>
   </div>
@@ -5718,6 +5718,47 @@ async function exportarEquipes(){
     // colunas F (evo do mês) e I (evo YTD); a participação fica sem cor, é sempre positiva
     const cf2=cfEvo('F2:F'+r2.length,1)+cfEvo('I2:I'+r2.length,4);
     sheets.push({name:'RESUMO EQUIPES',xml:sheetXml(r2,[40,10,9,14,14,11,15,15,11,17],h2.length,cf2)});
+  }
+
+
+  /* ---------- aba DE PARA BRICKS ----------
+     Cadastro completo de bricks em tres colunas: o brick, o setor de onde ele saiu e o
+     setor para onde ele foi, cada um com numero e nome. Onde a simulacao nao mexeu, o
+     mesmo setor se repete no DE e no PARA, para que a aba traga todos os bricks e sirva
+     de relacao fechada de quem atende o que. Brick que estava sem dono sai com o DE
+     vazio, e brick de setor encerrado que ainda nao foi realocado sai com "A REALOCAR"
+     no PARA, para a pendencia nao sumir da relacao. O brick aparece uma vez por linha
+     em que ele tem dono: o proprio codigo do setor diz se e PRIME ou INFINITY. */
+  {
+    const h3=['BRICK','DE','PARA'];
+    const r3=[h3.map(h=>cS(h,XS.hdr))];
+    const itens=[];
+    for(let L=0;L<2;L++)for(let b=0;b<S.bricks.length;b++){
+      const st=brickStatus(b,L);
+      if(st.orig<0&&st.eff<0)continue;   // brick que nao pertence a esta linha
+      itens.push({b,L,st});
+    }
+    /* ordem de leitura: pelo setor de onde o brick saiu e, dentro dele, pelo codigo do
+       brick, para que a relacao de cada setor apareca junta */
+    const cmpTxt=(a,b)=>a===b?0:(a<b?-1:1);
+    const numDe=i=>(i>=0&&S.setores[i])?(S.setores[i].num||0):1e9;
+    const numPara=i=>(i>=0&&S.setores[i])?(S.setores[i].num||0):1e9;
+    const codDe=b=>{const m=String((S.bricks[b]&&S.bricks[b].name)||'').match(/^\s*0*(\d+)/);
+      return m?parseInt(m[1],10):Number.MAX_SAFE_INTEGER;};
+    itens.sort((x,y)=>
+      numDe(x.st.orig)-numDe(y.st.orig)||
+      numPara(x.st.eff)-numPara(y.st.eff)||
+      codDe(x.b)-codDe(y.b)||
+      cmpTxt(S.bricks[x.b].name,S.bricks[y.b].name)||(x.L-y.L));
+    for(const it of itens){
+      const{b,st}=it;
+      const tone=st.tone;
+      r3.push([cT(S.bricks[b].name,tone),
+        cT(sLbl(st.orig),tone),
+        cT(st.eff>=0?sLbl(st.eff):'A REALOCAR',tone)]);
+    }
+    if(!itens.length)r3.push([cT('Nenhum brick com setor na base carregada',0)]);
+    sheets.push({name:'DE PARA BRICKS',xml:sheetXml(r3,[42,36,36],h3.length)});
   }
 
   await baixarXlsx(sheets,'EQUIPES_FATURAMENTO_AGO26.xlsx');
