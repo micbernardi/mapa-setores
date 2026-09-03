@@ -3459,16 +3459,66 @@ function fmtKm(km){
    coordenada da sede, para o cache continuar valendo quando o arquivo mudar. */
 const ROTA={
   on:true,
-  srv:'https://router.project-osrm.org',
-  cache:new Map(),        // "lon_lat|lon_lat" -> km por estrada
-  geo:new Map(),          // o mesmo par -> geometria da rota, para o traçado da régua
+  /* O primeiro da lista e o servidor de demonstracao do OSRM; o segundo e o mesmo
+     servico da FOSSGIS com outro nome, que as vezes responde quando o primeiro nao.
+     Da para trocar por uma instancia propria em Configuracoes. */
+  srvs:['https://router.project-osrm.org','https://routing.openstreetmap.de/routed-car'],
+  get srv(){return this.srvs[0];},
+  cache:new Map(),        // "lon_lat|lon_lat" -> km por estrada (so sucesso entra aqui)
   geo:new Map(),          // o mesmo par -> geometria da rota, para o traçado da régua
   tentados:new Set(),     // pares ja pedidos nesta sessao, com ou sem sucesso
   novos:new Map(),        // pendentes de gravacao no IndexedDB
   carregando:0, falhas:0, ok:0, avisou:false,
+  erro:'',                // ultimo motivo de falha, para aparecer na tela
   NP:3,                   // quantas cidades do setor entram na comparacao por par
-  MAXREQ:14               // teto de requisicoes por rodada
+  MAXREQ:14,              // teto de requisicoes por rodada
+  PAUSA:350,              // ms entre requisicoes: a politica do servidor pede <= 1/s
+  TIMEOUT:12000
 };
+const LS_ROTASRV='simulador_setorizacao_rota_srv';
+try{const v=localStorage.getItem(LS_ROTASRV);
+  if(v)ROTA.srvs=[v].concat(ROTA.srvs.filter(x=>x!==v));}catch(e){}
+function rotaServidor(url){
+  const u=String(url||'').trim().replace(/\/+$/,'');
+  try{if(u)localStorage.setItem(LS_ROTASRV,u);else localStorage.removeItem(LS_ROTASRV);}catch(e){}
+  const base=['https://router.project-osrm.org','https://routing.openstreetmap.de/routed-car'];
+  ROTA.srvs=u?[u].concat(base.filter(x=>x!==u)):base;
+  ROTA.tentados.clear();ROTA.erro='';ROTA.falhas=0;
+}
+const rotaEspera=ms=>new Promise(r=>setTimeout(r,ms));
+/* Uma requisicao, tentando cada servidor da lista. O erro fica guardado em texto:
+   sem isso um catch vazio esconde se o problema e CORS, cota, rede ou o servico. */
+async function rotaBuscar(caminho){
+  for(let i=0;i<ROTA.srvs.length;i++){
+    const url=ROTA.srvs[i]+caminho;
+    let ctl=null,tid=null;
+    try{
+      if(typeof AbortController!=='undefined'){
+        ctl=new AbortController();tid=setTimeout(()=>ctl.abort(),ROTA.TIMEOUT);
+      }
+      const r=await fetch(url,ctl?{signal:ctl.signal}:undefined);
+      if(tid)clearTimeout(tid);
+      if(!r.ok){
+        ROTA.erro=(r.status===429?'o serviço de rotas recusou por excesso de consultas (429)'
+          :'o serviço de rotas respondeu HTTP '+r.status);
+        continue;
+      }
+      const js=await r.json();
+      if(js&&js.code&&js.code!=='Ok'){ROTA.erro='o serviço de rotas respondeu '+js.code;continue;}
+      ROTA.erro='';
+      if(i>0){const bom=ROTA.srvs.splice(i,1)[0];ROTA.srvs.unshift(bom);}   // promove quem respondeu
+      return js;
+    }catch(e){
+      if(tid)clearTimeout(tid);
+      const m=String(e&&e.message||e);
+      ROTA.erro=(e&&e.name==='AbortError')?'o serviço de rotas não respondeu no tempo'
+        :(location.protocol==='file:'
+          ?'o navegador bloqueou a consulta porque a página está aberta como arquivo (file://)'
+          :'não consegui falar com o serviço de rotas ('+m+')');
+    }
+  }
+  return null;
+}
 const LS_ROTA='simulador_setorizacao_rota';
 try{const v=localStorage.getItem(LS_ROTA);if(v!==null)ROTA.on=(v==='1');}catch(e){}
 function rotaPref(on){
@@ -3523,7 +3573,7 @@ function rotaFaltando(consultas){
     for(const m2 of rotaCandidatos(q.mi,q.arr)){
       if(m2===q.mi)continue;
       const k=rotaPar(q.mi,m2);
-      if(vistos.has(k)||ROTA.tentados.has(k)||ROTA.cache.has(k))continue;
+      if(vistos.has(k)||ROTA.tentados.has(k)||ROTA.cache.get(k)!=null)continue;
       vistos.add(k);falta.push([q.mi,m2]);
     }
   }
@@ -3551,29 +3601,27 @@ async function rotaMedirPts(pares){
     for(const[a,dest]of lotes.slice(0,ROTA.MAXREQ)){
       for(const b of dest)ROTA.tentados.add(rotaParPt(a,b));
       const pts=[a,...dest].map(p=>p[0].toFixed(5)+','+p[1].toFixed(5)).join(';');
-      const url=ROTA.srv+'/table/v1/driving/'+pts+'?annotations=distance&sources=0';
-      let js=null;
-      try{
-        const r=await fetch(url);
-        if(r.ok)js=await r.json();
-      }catch(e){}
-      if(!js||js.code!=='Ok'||!js.distances||!js.distances[0]){ROTA.falhas++;continue;}
+      const js=await rotaBuscar('/table/v1/driving/'+pts+'?annotations=distance&sources=0');
+      if(!js||!js.distances||!js.distances[0]){ROTA.falhas++;await rotaEspera(ROTA.PAUSA);continue;}
       const linha=js.distances[0];
+      /* so o que voltou com numero entra no cache: gravar null faria o par nunca mais
+         ser consultado, mesmo depois de o servico voltar */
       dest.forEach((b,k)=>{
         const met=linha[k+1];
-        const par=rotaParPt(a,b);
-        const km=(met==null)?null:met/1000;
-        ROTA.cache.set(par,km);ROTA.novos.set(par,km);
-        if(km!=null)n++;
+        if(met==null)return;
+        const par=rotaParPt(a,b),km=met/1000;
+        ROTA.cache.set(par,km);ROTA.novos.set(par,km);n++;
       });
       ROTA.ok++;
+      await rotaEspera(ROTA.PAUSA);
     }
   }finally{ROTA.carregando--;}
   rotaGravar();
   return n;
 }
 /* O tracado so interessa para a regua do mapa, entao ele vem do servico de rota, um par
-   por vez, com a geometria simplificada. O km vem junto e alimenta o mesmo cache. */
+   por vez, com a geometria simplificada. O km vem junto e alimenta o mesmo cache.
+   Quando a consulta falha nada e gravado: o par volta a ser tentado na proxima sessao. */
 async function rotaTracado(pares){
   if(!ROTA.on||!pares.length)return 0;
   let n=0;
@@ -3582,53 +3630,15 @@ async function rotaTracado(pares){
     for(const[a,b]of pares.slice(0,ROTA.MAXREQ)){
       const par=rotaParPt(a,b);
       ROTA.tentados.add(par);
-      const url=ROTA.srv+'/route/v1/driving/'+a[0].toFixed(5)+','+a[1].toFixed(5)+';'
-        +b[0].toFixed(5)+','+b[1].toFixed(5)+'?overview=simplified&geometries=polyline';
-      let km=null,geo=null;
-      try{
-        const r=await fetch(url);
-        if(r.ok){
-          const js=await r.json();
-          if(js.code==='Ok'&&js.routes&&js.routes[0]){
-            km=js.routes[0].distance/1000;
-            geo=js.routes[0].geometry||null;
-          }
-        }
-      }catch(e){}
-      if(km===null){ROTA.falhas++;}else{ROTA.ok++;n++;}
+      const js=await rotaBuscar('/route/v1/driving/'+a[0].toFixed(5)+','+a[1].toFixed(5)+';'
+        +b[0].toFixed(5)+','+b[1].toFixed(5)+'?overview=simplified&geometries=polyline');
+      const rota=(js&&js.routes&&js.routes[0])?js.routes[0]:null;
+      if(!rota||rota.distance==null){ROTA.falhas++;await rotaEspera(ROTA.PAUSA);continue;}
+      const km=rota.distance/1000,geo=rota.geometry||null;
+      ROTA.ok++;n++;
       ROTA.cache.set(par,km);ROTA.novos.set(par,km);
       ROTA.geo.set(par,geo);ROTA.novos.set('g:'+par,geo);
-    }
-  }finally{ROTA.carregando--;}
-  rotaGravar();
-  return n;
-}
-/* O tracado so interessa para a regua do mapa, entao ele vem do servico de rota, um par
-   por vez, com a geometria simplificada. O km vem junto e alimenta o mesmo cache. */
-async function rotaTracado(pares){
-  if(!ROTA.on||!pares.length)return 0;
-  let n=0;
-  ROTA.carregando++;
-  try{
-    for(const[a,b]of pares.slice(0,ROTA.MAXREQ)){
-      const par=rotaParPt(a,b);
-      ROTA.tentados.add(par);
-      const url=ROTA.srv+'/route/v1/driving/'+a[0].toFixed(5)+','+a[1].toFixed(5)+';'
-        +b[0].toFixed(5)+','+b[1].toFixed(5)+'?overview=simplified&geometries=polyline';
-      let km=null,geo=null;
-      try{
-        const r=await fetch(url);
-        if(r.ok){
-          const js=await r.json();
-          if(js.code==='Ok'&&js.routes&&js.routes[0]){
-            km=js.routes[0].distance/1000;
-            geo=js.routes[0].geometry||null;
-          }
-        }
-      }catch(e){}
-      if(km===null){ROTA.falhas++;}else{ROTA.ok++;n++;}
-      ROTA.cache.set(par,km);ROTA.novos.set(par,km);
-      ROTA.geo.set(par,geo);ROTA.novos.set('g:'+par,geo);
+      await rotaEspera(ROTA.PAUSA);
     }
   }finally{ROTA.carregando--;}
   rotaGravar();
@@ -3636,12 +3646,15 @@ async function rotaTracado(pares){
 }
 function rotaCarregarCache(){
   return idbOpen().then(db=>new Promise(res=>{
-    const st=db.transaction(IDB_ROTAS,'readonly').objectStore(IDB_ROTAS);
+    const st=db.transaction(IDB_ROTAS,'readwrite').objectStore(IDB_ROTAS);
     const rq=st.openCursor();
     rq.onsuccess=()=>{
       const c=rq.result;
       if(!c){res(ROTA.cache.size);return;}
-      if(String(c.key).slice(0,2)==='g:')ROTA.geo.set(String(c.key).slice(2),c.value);
+      /* entradas nulas sao falhas antigas gravadas por engano: apaga, senao o par
+         fica marcado como "ja consultado" para sempre e nunca mais mede por estrada */
+      if(c.value===null||c.value===undefined){try{c.delete();}catch(e){}}
+      else if(String(c.key).slice(0,2)==='g:')ROTA.geo.set(String(c.key).slice(2),c.value);
       else ROTA.cache.set(c.key,c.value);
       c.continue();
     };
@@ -3661,22 +3674,29 @@ function rotaGravar(){
 function rotaStatus(){
   if(!ROTA.on)return'linha reta';
   if(ROTA.carregando)return'medindo por estrada...';
-  if(ROTA.falhas&&!ROTA.ok)return'estrada indisponível, usando linha reta';
+  if(ROTA.falhas&&!ROTA.ok)return'usando linha reta: '+(ROTA.erro||'o serviço de rotas não respondeu');
   return'por estrada';
 }
 function rotaSubtitulo(nEstrada,total){
   if(!ROTA.on)return'em linha reta';
   if(ROTA.carregando)return'medindo por estrada, '+nEstrada+' de '+total+' prontos';
   if(!total||nEstrada===total)return'por estrada';
-  if(!nEstrada)return'em linha reta, o serviço de rotas não respondeu';
+  if(!nEstrada)return'em linha reta: '+(ROTA.erro||'o serviço de rotas não respondeu');
   return'por estrada em '+nEstrada+' de '+total+', o resto ainda em linha reta';
 }
 /* chave liga e desliga, com o estado do que ja foi medido */
+function rotaTentarDeNovo(){
+  ROTA.tentados.clear();ROTA.falhas=0;ROTA.erro='';
+  if(modalSector>=0&&$('sectorModalBg').classList.contains('open'))renderSectorModal();
+  toast('Vou consultar o serviço de rotas de novo');
+}
 function rotaBarra(){
+  const ruim=ROTA.on&&ROTA.falhas&&!ROTA.carregando;
   return`<div class="rotabar">
     <label><input type="checkbox" ${ROTA.on?'checked':''} onchange="rotaPref(this.checked)"> quilometragem por estrada</label>
     <span class="st">${ROTA.on?esc(rotaStatus()):'usando linha reta entre as sedes'}</span>
     ${ROTA.on?'<span class="st">'+ROTA.cache.size.toLocaleString('pt-BR')+' trechos já medidos neste navegador</span>':''}
+    ${ruim?'<a href="javascript:void 0" onclick="rotaTentarDeNovo()">tentar de novo</a>':''}
   </div>`;
 }
 /* dispara a medicao do que falta e redesenha o modal quando terminar */
@@ -5807,7 +5827,14 @@ async function atenderRotaMapa(pares){
   if(!ROTA.on){resp();return;}
   /* a regua precisa do desenho, entao aqui vai o servico de rota e nao o de matriz,
      inclusive quando o km ja esta medido mas a geometria ainda nao */
-  const falta=(pares||[]).filter(([a,b])=>!ROTA.geo.has(rotaParPt(a,b)));
+  /* falta o que ainda nao tem traçado, contando como faltante o par que falhou antes
+     e ainda nao foi tentado nesta sessao */
+  const falta=(pares||[]).filter(([a,b])=>{
+    const k=rotaParPt(a,b);
+    const g=ROTA.geo.get(k);
+    if(g&&g.length)return false;
+    return !ROTA.tentados.has(k);
+  });
   if(falta.length)await rotaTracado(falta);
   resp();
 }
