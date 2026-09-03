@@ -4188,7 +4188,12 @@ function espelhoBrickHtml(b,L,princ){
 function renderModalBricks(pd){
   const s=S.setores[modalSector];
   const{L,list}=sectorBricks(modalSector);
-  const rows=list.map(b=>({b,cur:cache.bs.cur[b*2+L],ref:cache.bs.ref[b*2+L]}))
+  /* a evolucao YTD do brick sai sempre da base YTD, e nao do periodo escolhido no topo:
+     e ela que mostra se o brick vem crescendo no ano, independente do mes em tela. Quando
+     o periodo ja e YTD a coluna repetiria a de evolucao, entao some. */
+  const bsY=bsYTD(),mostraY=cache.bs.pd!==bsY.pd;
+  const rows=list.map(b=>({b,cur:cache.bs.cur[b*2+L],ref:cache.bs.ref[b*2+L],
+      curY:bsY.cur[b*2+L],refY:bsY.ref[b*2+L]}))
     .sort((a,b)=>{
       const ca=normTxt(S.bricks[a.b].city),cb=normTxt(S.bricks[b.b].city);
       if(ca!==cb)return ca<cb?-1:1;
@@ -4210,7 +4215,7 @@ function renderModalBricks(pd){
   if(!rows.length){html+='<div class="emptymsg">Nenhum brick atribuído a este setor.</div>';$('smBody').innerHTML=html;renderModalFoot(L,0);return;}
   html+=`<table><thead><tr>
     <th style="width:26px"><input type="checkbox" id="selAll" onchange="toggleAllBricks(this.checked)"></th>
-    <th>Brick</th><th>Cidade</th><th>Espelho ${LNAME[1-L]}</th><th class="td-r" style="text-align:right">Média mês</th><th class="td-r" style="text-align:right">${esc(pd.lbl)}</th><th class="td-r" style="text-align:right">Evo</th><th></th></tr></thead><tbody>`;
+    <th>Brick</th><th>Cidade</th><th>Espelho ${LNAME[1-L]}</th><th class="td-r" style="text-align:right">Média mês</th><th class="td-r" style="text-align:right">${esc(pd.lbl)}</th><th class="td-r" style="text-align:right">Evo</th>${mostraY?'<th class="td-r" style="text-align:right">Evo YTD</th>':''}<th></th></tr></thead><tbody>`;
   for(const r of rows){
     const bi=S.bricks[r.b];
     const orig=L===0?bi.sP:bi.sI;
@@ -4225,6 +4230,7 @@ function renderModalBricks(pd){
       <td class="td-r num" style="text-align:right;color:var(--mut)">${fmtBRL(mediaBrick(r.b,L))}</td>
       <td class="td-r num" style="text-align:right">${fmtBRL(r.cur)}</td>
       <td class="td-r" style="text-align:right">${evoHtml(r.cur,r.ref)}</td>
+      ${mostraY?`<td class="td-r" style="text-align:right">${evoHtml(r.curY,r.refY)}</td>`:''}
       <td style="text-align:right">${moved?`<button class="linkbtn" onclick="undoBrick(${r.b},${L})">devolver</button>`:''}</td>
     </tr>`;
   }
@@ -5381,15 +5387,17 @@ async function exportarSetorizacao(){
       a.push(cN(ba.nb,tone));
       a.push(cN(t.nb,tone));
       a.push(cN(t.nb-ba.nb,tone));
-      a.push(cN(ba.cur,tone));
-      a.push(cN(ty.cur,tone));
-      a.push(cN(ty.cur-ba.cur,tone));
+      /* valores em reais saem com formato de moeda; so contagem de bricks, de cidades e
+         de setores adjacentes continua como numero puro */
+      a.push(cM(ba.cur,tone));
+      a.push(cM(ty.cur,tone));
+      a.push(cM(ty.cur-ba.cur,tone));
       a.push(cP(evoFrac(ty.cur,ba.cur),tone));
-      a.push(cN(media,abaixo?4:tone));
+      a.push(cM(media,abaixo?4:tone));
       a.push(cT(ext?'':(abaixo?'SIM':'NAO'),abaixo?4:tone));
-      a.push(cN(bm.cur,tone));
-      a.push(cN(t.cur,tone));
-      a.push(cN(t.cur-bm.cur,tone));
+      a.push(cM(bm.cur,tone));
+      a.push(cM(t.cur,tone));
+      a.push(cM(t.cur-bm.cur,tone));
       if(ext){
         a.push(cT('',tone));a.push(cT('',tone));a.push(cT('',tone));
       }else{
@@ -5406,13 +5414,13 @@ async function exportarSetorizacao(){
     tot.push(cS('TOTAL',XS.btxt));tot.push(cS('',XS.btxt));tot.push(cS('',XS.btxt));tot.push(cS('',XS.btxt));
     tot.push(cS('',XS.btxt));tot.push(cS('',XS.btxt));
     tot.push(cNs(tba,XS.bnum));tot.push(cNs(tbd,XS.bnum));tot.push(cNs(tbd-tba,XS.bnum));
-    tot.push(cNs(tya,XS.bnum));tot.push(cNs(tyd,XS.bnum));tot.push(cNs(tyd-tya,XS.bnum));
+    tot.push(cNs(tya,XS.bmoeda));tot.push(cNs(tyd,XS.bmoeda));tot.push(cNs(tyd-tya,XS.bmoeda));
     tot.push(cS('',XS.btxt));tot.push(cS('',XS.btxt));tot.push(cS('',XS.btxt));
-    tot.push(cNs(tma,XS.bnum));tot.push(cNs(tmd,XS.bnum));tot.push(cNs(tmd-tma,XS.bnum));
+    tot.push(cNs(tma,XS.bmoeda));tot.push(cNs(tmd,XS.bmoeda));tot.push(cNs(tmd-tma,XS.bmoeda));
     for(let c=0;c<4;c++)tot.push(cS('',XS.btxt));
     rows.push(tot);
     sheets.push({name:'IMPACTO POR SETOR',xml:sheetXml(rows,
-      [10,9,32,11,15,34,13,14,11,13,13,13,12,15,15,14,14,13,10,17,34,15],nC)});
+      [10,9,32,11,15,34,13,14,11,16,16,16,12,17,15,16,16,16,10,17,34,15],nC)});
   }
 
   /* ===================== ABA 4: BRICKS (configuracao nova) ===================== */
@@ -5456,119 +5464,12 @@ async function exportarSetorizacao(){
     sheets.push({name:'BRICKS',xml:sheetXml(rows,[11,34,26,28,13,30,14,14,30,15,13,13,13,13,13,13],nC)});
   }
 
-  /* ============ ABA 4B: BRICK X PRODUTO (YTD anterior e atual) ============
-     Uma linha por combinacao brick + marca, com o YTD do ano passado e o do ano corrente.
-     E o nivel mais fino que a base de vendas guarda, e e o que permite refazer qualquer
-     recorte de marcas fora do simulador sem precisar reprocessar a base inteira.
-     A aba e montada em XML direto, e nao pelo sheetXml, porque aqui sao centenas de
-     milhares de linhas e construir um objeto por celula estoura a memoria do navegador. */
-  {
-    const pdY=bsY.pd;
-    const stride=S.nM+3;
-    const ytdLbl2='YTD '+pdY.lbl.replace(/^YTD\s*/i,'');
-    const ytdAnt2=pdY.refLbl.replace(/^vs\s*/i,'')||'YTD ANT';
-    const head=['LINHA','BRICK','CIDADE','SETOR DESTINO','NOME DESTINO','PRODUTO','MARCA',
-      ytdAnt2,ytdLbl2,'EVO YTD'];
-    const larg=[11,34,26,14,32,30,12,15,15,12];
-    const S_HDR=XS.hdr, S_TXT=xf(0,0), S_MOE=xf(0,3), S_PCT=xf(0,2);
-    const parts=[];
-    let cells='';
-    for(let c=0;c<head.length;c++)
-      cells+='<c r="'+colRef(c)+'1" t="inlineStr" s="'+S_HDR+'"><is><t xml:space="preserve">'+xesc(head[c])+'</t></is></c>';
-    parts.push('<row r="1">'+cells+'</row>');
-    // texto do brick e do setor resolvido uma vez so, para nao repetir trabalho por combinacao
-    const bTxt=S.bricks.map(b=>xesc(b.name));
-    const bCid=S.bricks.map(b=>xesc(b.city||''));
-    const mTxt=S.marcas.map(m=>xesc(m.name));
-    const sNumT=S.setores.map(s=>xesc(String(s.num)));
-    const sNomT=S.setores.map(s=>xesc(s.nomeEstudo||s.nome||''));
-    let r=1,n=0;
-    for(let i=0;i<S.nCombos;i++){
-      const m=S.mArr[i],b=S.bArr[i];
-      const o=i*stride;
-      let cur=0;for(const ix of pdY.cur)cur+=S.vArr[o+ix];
-      const ref=pdY.hist>=0?S.vArr[o+S.nM+pdY.hist]:0;
-      if(cur===0&&ref===0)continue;
-      const L=linhaOf(m);
-      const s=sectorOf(b,L);
-      const temS=s>=0&&S.setores[s];
-      r++;n++;
-      const ev=(ref&&isFinite(ref))?(cur/ref-1):null;
-      let c='';
-      const T=(col,v)=>{c+='<c r="'+colRef(col)+r+'" t="inlineStr" s="'+S_TXT+'"><is><t xml:space="preserve">'+v+'</t></is></c>';};
-      const N=(col,v,st)=>{if(v!=null&&isFinite(v))c+='<c r="'+colRef(col)+r+'" s="'+st+'"><v>'+v+'</v></c>';};
-      T(0,LNAME[L]); T(1,bTxt[b]); T(2,bCid[b]);
-      T(3,temS?sNumT[s]:''); T(4,temS?sNomT[s]:'');
-      T(5,mTxt[m]); T(6,S.marcaOff.has(m)?'EXCLUIDA':'ATIVA');
-      N(7,ref,S_MOE); N(8,cur,S_MOE); N(9,ev,S_PCT);
-      parts.push('<row r="'+r+'">'+c+'</row>');
-    }
-    const cols='<cols>'+larg.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('')+'</cols>';
-    const xml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-      +'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-      +'<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
-      +'<sheetFormatPr defaultRowHeight="14.5"/>'+cols
-      +'<sheetData>'+parts.join('')+'</sheetData>'
-      +'<autoFilter ref="A1:'+colRef(head.length-1)+'1"/></worksheet>';
-    sheets.push({name:'BRICK X PRODUTO',xml});
-    S.detProdN=n;
-  }
+  /* As abas BRICK X PRODUTO e ALTERACOES saíram da exportação a pedido: a primeira
+     inflava o arquivo com centenas de milhares de linhas e a segunda repete o que já
+     aparece em DE_PARA e em IMPACTO POR SETOR. O histórico de alterações continua na
+     tela, no botão Alterações. */
 
-  /* ===================== ABA 5: ALTERACOES ===================== */
-  {
-    const head=['TIPO','ITEM','LINHA','DE','PARA','CIDADE',mesLbl,'YTD 26','OBSERVAÇÃO'];
-    const nC=head.length;
-    const rows=[head.map(h=>cS(h,XS.hdr))];
-    const movs=[];
-    for(const[k,dest]of S.brickOv){
-      const[bStr,lStr]=k.split('|');
-      const b=+bStr,L=+lStr;
-      movs.push({b,L,dest,vy:bsY.cur[b*2+L]});
-    }
-    movs.sort((x,y)=>y.vy-x.vy);
-    for(const mv of movs){
-      const{b,L,dest}=mv;
-      const st=brickStatus(b,L);
-      const tone=st.tone;
-      const a=[];
-      a.push(cT('BRICK',tone));
-      a.push(cT(S.bricks[b].name,tone));
-      a.push(cT(LNAME[L],tone));
-      a.push(cT(st.orig>=0?sLbl(st.orig):'sem setor na linha',tone));
-      a.push(cT(sLbl(dest),tone));
-      a.push(cT(S.bricks[b].city,tone));
-      a.push(cN(bsM.cur[b*2+L],tone));
-      a.push(cN(mv.vy,tone));
-      a.push(cT(st.st+(st.orig>=0&&S.setores[st.orig].extinto?' (origem encerrada no estudo)':''),tone));
-      rows.push(a);
-    }
-    for(const[i,name]of S.teamOv){
-      const sx=S.setores[i];
-      const a=[cT('SETOR / EQUIPE',1),cT(sLbl(i),1),cT(LNAME[efLinha(i)],1),cT(sx.teamOrig||'',1),cT(name,1),cT('',1),
-        cN(stM[i].cur,1),cN(stY[i].cur,1),cT('setor movido de equipe',1)];
-      rows.push(a);
-    }
-    for(const[i,L]of S.linhaOv){
-      const sx=S.setores[i];
-      const a=[cT('SETOR / LINHA',1),cT(sLbl(i),1),cT(LNAME[L],1),cT(LNAME[sx.linha],1),cT(LNAME[L],1),cT('',1),
-        cN(stM[i].cur,1),cN(stY[i].cur,1),cT('setor convertido de linha',1)];
-      rows.push(a);
-    }
-    for(const[m,L]of S.marcaOv){
-      const a=[cT('MARCA / LINHA',1),cT(S.marcas[m].name,1),cT(LNAME[L],1),cT(LNAME[S.marcas[m].linha],1),cT(LNAME[L],1),cT('',1),
-        cT('',1),cT('',1),cT('marca reposicionada de linha',1)];
-      rows.push(a);
-    }
-    for(const m of S.marcaOff){
-      const a=[cT('MARCA / EXCLUÍDA',2),cT(S.marcas[m].name,2),cT(LNAME[S.marcas[m].linha],2),cT('na simulação',2),cT('fora da simulação',2),cT('',2),
-        cT('',2),cT('',2),cT('marca não considerada nos números',2)];
-      rows.push(a);
-    }
-    if(rows.length===1)rows.push([cT('',0),cT('Nenhuma alteração aplicada na simulação',0)]);
-    sheets.push({name:'ALTERACOES',xml:sheetXml(rows,[18,34,11,38,38,26,13,13,42],nC)});
-  }
-
-  /* ===================== ABA 6: A REALOCAR ===================== */
+  /* ===================== ABA 5: A REALOCAR ===================== */
   {
     const head=['LINHA','BRICK','CIDADE','SETOR DE ORIGEM','NOME ORIGEM','MOTIVO','SUGESTÃO PELA CIDADE','SUGESTÃO PELO ESPELHO',mesLbl,'YTD 26','MÉDIA MÊS'];
     const nC=head.length;
@@ -5607,7 +5508,7 @@ async function exportarSetorizacao(){
 
   /* ===================== empacotar ===================== */
   await baixarXlsx(sheets,'SETORIZACAO_SIMULADA_AGO26.xlsx');
-  toast('Setorização simulada exportada'+(S.detProdN?' · '+S.detProdN.toLocaleString('pt-BR')+' linhas na aba BRICK X PRODUTO':''));
+  toast('Setorização simulada exportada');
 }
 /* monta o pacote OOXML a partir das abas e devolve o blob do arquivo */
 async function montarXlsx(sheets){
