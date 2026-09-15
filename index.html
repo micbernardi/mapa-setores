@@ -223,6 +223,7 @@ body.mapaFull #mapaStats{display:flex}
 .badge.bRev.clk{cursor:pointer}
 .badge.bRev.clk:hover{color:var(--neg);box-shadow:inset 0 0 0 1px var(--neg)}
 .ev.pos{color:var(--pos)} .ev.neg{color:var(--neg)} .ev.neu{color:var(--mut)}
+.ev.nab{color:var(--mut2);font-variant-numeric:tabular-nums}
 
 /* ---------- marcas ---------- */
 #marcasView table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
@@ -300,6 +301,31 @@ tr.moff td .badge{opacity:1}
 .mbody th{text-align:left;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut2);padding:12px 8px 6px;font-weight:600;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel);z-index:1}
 .mbody td{padding:6px 8px;border-bottom:1px solid var(--border);font-size:12.5px}
 .mbody tr:hover td{background:var(--panel2)}
+/* detalhe de produtos do brick (clique no nome do brick na aba Bricks) */
+.bkname{cursor:pointer}
+.bkcar{display:inline-block;width:11px;color:var(--mut2);font-size:9px;margin-right:4px;transition:transform .12s;vertical-align:1px}
+.bkname.exp .bkcar{transform:rotate(90deg);color:var(--alt)}
+.bkname:hover .bkcar{color:var(--alt)}
+tr.bkdrow td{background:var(--panel2);padding:0 8px 10px 34px;border-bottom:1px solid var(--border)}
+tr.bkdrow:hover td{background:var(--panel2)}
+.bkdbox{border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);overflow:hidden}
+.bkdbox .bkdh{font-size:11px;color:var(--mut);padding:7px 10px;border-bottom:1px solid var(--border);background:var(--panel2)}
+.bkdbox table{width:100%;border-collapse:collapse}
+.bkdbox th{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut2);padding:6px 10px 4px;border-bottom:1px solid var(--border);position:static;background:var(--panel)}
+.bkdbox th.sortable{cursor:pointer;user-select:none;white-space:nowrap;transition:color .12s}
+.bkdbox th.sortable:hover{color:var(--txt);background:var(--border)}
+.bkdbox th.sorted{color:var(--alt)}
+.bkdbox th .sar{display:inline-block;margin-left:5px;font-size:9px;opacity:.3;vertical-align:1px}
+.bkdbox th .sar.sarL{margin-left:0;margin-right:6px}
+.bkdbox td.td-r,.bkdbox th.td-r{white-space:nowrap;font-variant-numeric:tabular-nums}
+.bkdbox td:first-child,.bkdbox th:first-child{width:34%}
+.bkdbox .ev{font-variant-numeric:tabular-nums}
+.bkdbox th.sortable:hover .sar{opacity:.7}
+.bkdbox th.sorted .sar{opacity:1}
+.bkdbox .bkdh{white-space:normal;line-height:1.45}
+.bkdbox td{padding:4px 10px;font-size:12px;border-bottom:1px solid var(--border)}
+.bkdbox tr:last-child td{border-bottom:0}
+.bkdbox tfoot td{font-weight:700;background:var(--panel2)}
 .mfoot{padding:9px 22px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex:none}
 .mfoot select{background:var(--panel2);border:1px solid var(--border2);border-radius:8px;color:var(--txt);padding:6px 10px;font-size:12.5px;max-width:340px}
 .mfoot .cnt{color:var(--mut);font-size:12px}
@@ -814,8 +840,10 @@ function normTxt(s){return String(s||'').normalize('NFD').replace(/[\u0300-\u036
   function nmKey(s){return normTxt(s).replace(/\s+/g,' ');}
 function fmtBRL(n){return 'R$ '+Math.round(n).toLocaleString('pt-BR');}
 function fmtBRL2(n){return n.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
+/* sem base de comparacao (mes anterior zerado) a variacao nao existe: nao e crescimento
+   infinito nem estabilidade, entao a celula mostra so um traco, sem cor de alta */
 function evoOf(cur,ref){
-  if(ref<=0.005)return cur>0.005?{txt:'novo',cls:'pos'}:{txt:'', cls:'neu'};
+  if(ref<=0.005)return{txt:'—',cls:'nab',semBase:true};
   const p=(cur/ref-1)*100;
   const cls=p>0.05?'pos':(p<-0.05?'neg':'neu');
   return{txt:(p>0?'+':'')+p.toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+'%',cls};
@@ -823,7 +851,8 @@ function evoOf(cur,ref){
 function evoHtml(cur,ref,extra){
   const e=evoOf(cur,ref);
   if(!e.txt)return'';
-  return `<span class="ev ${e.cls}">${e.txt}${extra?' '+extra:''}</span>`;
+  const ttl=e.semBase?' title="Sem venda no período de comparação"':'';
+  return `<span class="ev ${e.cls}"${ttl}>${e.txt}${extra&&!e.semBase?' '+extra:''}</span>`;
 }
 function toast(msg){
   const t=$('toast');t.textContent=msg;t.style.display='block';
@@ -999,7 +1028,7 @@ function bootFromCache(d){
   S.studyByNum=new Map();
   if(S.study)S.study.teams.forEach(t=>t.sectors.forEach(x=>S.studyByNum.set(x.num,x)));
   S.bArr=new Int32Array(d.bArr);S.mArr=new Int16Array(d.mArr);S.vArr=new Float64Array(d.vArr);
-  S.nCombos=S.bArr.length;
+  S.nCombos=S.bArr.length;bcIdx=null;
   buildTeams();
   applyBrickAlloc();
   applyDefaultOff();
@@ -1509,7 +1538,7 @@ function aplicarBase(d){
   S.months=d.months;S.nM=d.nM;
   S.bricks=d.bricks;S.marcas=d.marcas;S.setores=d.setores;
   S.bArr=d.bArr;S.mArr=d.mArr;S.vArr=d.vArr;
-  S.nCombos=S.bArr.length;
+  S.nCombos=S.bArr.length;bcIdx=null;
 }
 /* A base de bricks (aba "BRICKs 2026") e a fonte da verdade da alocacao brick -> setor.
    Para cada linha que a planilha cobre, o dono de cada brick passa a ser exclusivamente o
@@ -2842,7 +2871,8 @@ function renderMarcas(){
   // se as colunas YTD estao ocultas, cai para as colunas do periodo
   if(!showY&&marcaSort.k==='curY')marcaSort.k='cur';
   if(!showY&&marcaSort.k==='evoY')marcaSort.k='evo';
-  const evoV=(c,r)=>{ if(r<=0.005)return c>0.005?1e12:-1e12; return c/r-1; };
+  const evoV=(c,r)=>{ if(r<=0.005)return -1e12; return c/r-1; };
+  const semBase=m=>marcaSort.k==='evo'?ref[m]<=0.005:(marcaSort.k==='evoY'?refY[m]<=0.005:false);
   const keyV=(m)=>{
     switch(marcaSort.k){
       case 'name': return S.marcas[m].name;
@@ -2855,6 +2885,8 @@ function renderMarcas(){
     }
   };
   const order=S.marcas.map((_,i)=>i).sort((a,b)=>{
+    const sa=semBase(a),sb=semBase(b);
+    if(sa!==sb)return sa?1:-1;
     const va=keyV(a),vb=keyV(b);
     let c;
     if(typeof va==='string')c=va.localeCompare(vb,'pt-BR',{sensitivity:'base'});
@@ -3079,6 +3111,8 @@ function revertConversion(sIdx){
 
 /* ---------- sector modal ---------- */
 let modalSector=-1,modalTab='bricks',modalSel=new Set();
+/* brick aberto na aba Bricks para ver os produtos que compoem a venda dele (-1 = nenhum) */
+let modalDrill=-1;
 let reSel=new Set(),reMode='reforcar',reDest=new Map(),reRaio='auto';
 
 /* ---------- camada de municipios do Brasil ----------
@@ -3813,14 +3847,14 @@ function distDestino(b,L,dest){
   return distMun(mi,arr.get(dest)||[]).km;
 }
 function openSector(i){
-  modalSector=i;modalTab='bricks';modalSel.clear();reSel.clear();reDest.clear();reMode='reforcar';
+  modalSector=i;modalTab='bricks';modalSel.clear();reSel.clear();reDest.clear();reMode='reforcar';modalDrill=-1;
   $('sectorModalBg').classList.add('open');
   renderSectorModal();
 }
 $('smClose').onclick=()=>{$('sectorModalBg').classList.remove('open');modalSector=-1;};
 $('sectorModalBg').onclick=e=>{if(e.target===$('sectorModalBg')){$('sectorModalBg').classList.remove('open');modalSector=-1;}};
 document.querySelectorAll('.mtabs button').forEach(b=>{
-  b.onclick=()=>{modalTab=b.dataset.mt;reSel.clear();reDest.clear();renderSectorModal();};
+  b.onclick=()=>{modalTab=b.dataset.mt;reSel.clear();reDest.clear();modalDrill=-1;renderSectorModal();};
 });
 function sectorBricks(sIdx){
   const L=efLinha(sIdx);
@@ -4185,6 +4219,124 @@ function espelhoBrickHtml(b,L,princ){
   return`<button class="espcell${dif?' dif':''}" title="${esc(st.num+' - '+nm)}${dif?' — diferente do espelho principal deste setor':''}" onclick="event.stopPropagation();openSector(${s2})">`
     +`${st.num} <span class="espcnm">${esc(nm.split(' ')[0])}</span></button>`;
 }
+/* indice brick -> linhas da base de vendas, montado uma vez por base carregada. Sem ele
+   cada clique num brick varreria os S.nCombos pares brick/marca inteiros. */
+var bcIdx=null;
+function comboIdxOfBrick(b){
+  if(!bcIdx){
+    bcIdx=new Map();
+    for(let i=0;i<S.nCombos;i++){
+      const k=S.bArr[i];
+      const a=bcIdx.get(k);
+      if(a)a.push(i);else bcIdx.set(k,[i]);
+    }
+  }
+  return bcIdx.get(b)||[];
+}
+function toggleBrickDrill(b){
+  modalDrill=modalDrill===b?-1:b;
+  renderSectorModal();
+}
+/* ordenacao da tabela de produtos do brick: vale para qualquer brick que voce abrir,
+   entao a ordem escolhida nao se perde ao pular de um brick para o outro */
+let drillSort={k:'cur',d:-1};
+const DSORT_ASC=['name'];
+function setDrillSort(k){
+  if(drillSort.k===k)drillSort.d=-drillSort.d;
+  else drillSort={k,d:DSORT_ASC.includes(k)?1:-1};
+  renderSectorModal();
+}
+function thDrill(k,lbl,right,title){
+  const on=drillSort.k===k;
+  const ar=on?(drillSort.d>0?'▲':'▼'):'↕';
+  /* nas colunas de numero a seta vai a esquerda do rotulo: se ficasse a direita, empurraria
+     o texto do cabecalho para dentro e ele deixaria de alinhar com os valores da coluna */
+  const inner=right?`<span class="sar sarL">${ar}</span>${lbl}`:`${lbl}<span class="sar">${ar}</span>`;
+  return `<th class="sortable${right?' td-r':''}${on?' sorted':''}"${right?' style="text-align:right"':''}`
+    +` title="${title?esc(title)+' — ':''}Clique para ordenar" onclick="setDrillSort('${k}')">${inner}</th>`;
+}
+/* produtos que compoem a venda de um brick dentro da linha do setor: as marcas excluidas da
+   simulacao e as da outra linha ficam de fora, que e exatamente o criterio usado no total. */
+function brickDrillHtml(b,L,pd,colspan){
+  const stride=S.nM+3;
+  const pdY=periodDef('ytd');
+  const mostraY=S.period!=='ytd';
+  const nm=Math.max(1,cache.nYtdM||pdY.cur.length||1);
+  const lin=[];let outra=0,fora=0;
+  for(const i of comboIdxOfBrick(b)){
+    const m=S.mArr[i],o=i*stride;
+    let c=0;for(const ix of pd.cur)c+=S.vArr[o+ix];
+    let cy=0;for(const ix of pdY.cur)cy+=S.vArr[o+ix];
+    if(S.marcaOff.has(m)){fora+=c;continue;}
+    if(linhaOf(m)!==L){outra+=c;continue;}
+    let r=0;
+    if(pd.hist>=0)r=S.vArr[o+S.nM+pd.hist];
+    else for(const ix of pd.refIdxs)r+=S.vArr[o+ix];
+    const ry=S.vArr[o+S.nM+pdY.hist];
+    if(!c&&!r&&!cy&&!ry)continue;
+    lin.push({m,c,r,cy,ry});
+  }
+  // com as colunas YTD ocultas, ordenar por elas cairia numa coluna que nao esta em tela
+  let sk=drillSort.k;
+  if(!mostraY&&sk==='curY')sk='cur';
+  if(!mostraY&&sk==='evoY')sk='evo';
+  const evoV=(c,r)=>{ if(r<=0.005)return -1e12; return c/r-1; };
+  /* linhas sem base de comparacao nao tem evolucao: elas vao sempre para o fim da lista,
+     nos dois sentidos, em vez de fingir a maior ou a menor variacao da coluna */
+  const semBase=x=>sk==='evo'?x.r<=0.005:(sk==='evoY'?x.ry<=0.005:false);
+  const keyV=x=>{
+    switch(sk){
+      case 'name': return S.marcas[x.m].name;
+      case 'media': return mostraY?x.cy:x.c;
+      case 'evo': return evoV(x.c,x.r);
+      case 'curY': return x.cy;
+      case 'evoY': return evoV(x.cy,x.ry);
+      default: return x.c;
+    }
+  };
+  lin.sort((a,z)=>{
+    const sa=semBase(a),sz=semBase(z);
+    if(sa!==sz)return sa?1:-1;
+    const va=keyV(a),vz=keyV(z);
+    let c;
+    if(typeof va==='string')c=va.localeCompare(vz,'pt-BR',{sensitivity:'base'});
+    else c=va-vz;
+    if(c===0)return S.marcas[a.m].name.localeCompare(S.marcas[z.m].name,'pt-BR',{sensitivity:'base'});
+    return c*drillSort.d;
+  });
+  const notas=[];
+  if(outra>0.5)notas.push(`${fmtBRL(outra)} em marcas da linha ${LNAME[1-L]} neste brick (contam para o setor ${LNAME[1-L]})`);
+  if(fora>0.5)notas.push(`${fmtBRL(fora)} em marcas excluídas da simulação`);
+  if(!lin.length){
+    return `<tr class="bkdrow"><td colspan="${colspan}"><div class="bkdbox"><div class="bkdh">Sem venda de marcas ${LNAME[L]} neste brick${notas.length?'. '+esc(notas.join('. '))+'.':'.'}</div></div></td></tr>`;
+  }
+  let tC=0,tR=0,tY=0,tYR=0;
+  let rows='';
+  for(const x of lin){
+    tC+=x.c;tR+=x.r;tY+=x.cy;tYR+=x.ry;
+    rows+=`<tr><td style="font-weight:600">${esc(S.marcas[x.m].name)}${S.marcaOv.has(x.m)?' <span class="badge bAlt">trocada</span>':''}</td>
+      <td class="td-r num" style="text-align:right;color:var(--mut)">${fmtBRL((mostraY?x.cy:x.c)/nm)}</td>
+      <td class="td-r num" style="text-align:right">${fmtBRL(x.c)}</td>
+      <td class="td-r" style="text-align:right">${evoHtml(x.c,x.r)}</td>
+      ${mostraY?`<td class="td-r num" style="text-align:right">${fmtBRL(x.cy)}</td>
+      <td class="td-r" style="text-align:right">${evoHtml(x.cy,x.ry)}</td>`:''}</tr>`;
+  }
+  return `<tr class="bkdrow"><td colspan="${colspan}"><div class="bkdbox">
+    <div class="bkdh">${lin.length} marca${lin.length>1?'s':''} ${LNAME[L]} com venda neste brick${notas.length?' — '+esc(notas.join('; ')):''}</div>
+    <table><thead><tr>${thDrill('name','Produto')}
+      ${thDrill('media','Média mês',1,pdY.lbl+' dividido pelos '+nm+' meses fechados')}
+      ${thDrill('cur',esc(pd.lbl),1)}
+      ${thDrill('evo','Evo',1)}
+      ${mostraY?thDrill('curY',esc(pdY.lbl),1)+thDrill('evoY','Evo YTD',1):''}
+    </tr></thead><tbody>${rows}</tbody>
+    <tfoot><tr><td>Total do brick</td>
+      <td class="td-r num" style="text-align:right">${fmtBRL((mostraY?tY:tC)/nm)}</td>
+      <td class="td-r num" style="text-align:right">${fmtBRL(tC)}</td>
+      <td class="td-r" style="text-align:right">${evoHtml(tC,tR)}</td>
+      ${mostraY?`<td class="td-r num" style="text-align:right">${fmtBRL(tY)}</td>
+      <td class="td-r" style="text-align:right">${evoHtml(tY,tYR)}</td>`:''}
+    </tr></tfoot></table></div></td></tr>`;
+}
 function renderModalBricks(pd){
   const s=S.setores[modalSector];
   const{L,list}=sectorBricks(modalSector);
@@ -4220,9 +4372,10 @@ function renderModalBricks(pd){
     const bi=S.bricks[r.b];
     const orig=L===0?bi.sP:bi.sI;
     const moved=S.brickOv.has(r.b+'|'+L);
+    const open=modalDrill===r.b;
     html+=`<tr>
       <td><input type="checkbox" ${modalSel.has(r.b)?'checked':''} onchange="toggleBrickSel(${r.b},this.checked)"></td>
-      <td style="font-weight:600">${esc(bi.name)}${confMap.has(r.b)?(confRevB
+      <td class="bkname${open?' exp':''}" style="font-weight:600" onclick="toggleBrickDrill(${r.b})" title="Ver os produtos que compõem a venda deste brick"><span class="bkcar">▶</span>${esc(bi.name)}${confMap.has(r.b)?(confRevB
         ?' <span class="badge bAlt" title="Veio de '+esc(S.setores[confMap.get(r.b)].num+' - '+(S.setores[confMap.get(r.b)].nomeEstudo||S.setores[confMap.get(r.b)].nome))+' (conflito revisado)">de '+S.setores[confMap.get(r.b)].num+'</span>'
         :' <span class="badge bZero" title="Conflito com '+esc(S.setores[confMap.get(r.b)].num+' - '+(S.setores[confMap.get(r.b)].nomeEstudo||S.setores[confMap.get(r.b)].nome))+'">conflito com '+S.setores[confMap.get(r.b)].num+' '+esc((S.setores[confMap.get(r.b)].nomeEstudo||S.setores[confMap.get(r.b)].nome).split(' ')[0])+'</span>'):(moved&&orig>=0?' <span class="badge bAlt" title="Movido de '+esc(S.setores[orig].num+' - '+(S.setores[orig].nomeEstudo||S.setores[orig].nome))+'">de '+S.setores[orig].num+'</span>':'')}${moved&&orig<0?' <span class="badge bAlt">novo</span>':''}</td>
       <td style="color:var(--mut)">${esc(bi.city)}</td>
@@ -4233,6 +4386,7 @@ function renderModalBricks(pd){
       ${mostraY?`<td class="td-r" style="text-align:right">${evoHtml(r.curY,r.refY)}</td>`:''}
       <td style="text-align:right">${moved?`<button class="linkbtn" onclick="undoBrick(${r.b},${L})">devolver</button>`:''}</td>
     </tr>`;
+    if(open)html+=brickDrillHtml(r.b,L,pd,mostraY?9:8);
   }
   html+='</tbody></table>';
   $('smBody').innerHTML=html;
@@ -4283,7 +4437,11 @@ function renderModalMarcas(pd){
   const{L,list}=sectorBricks(modalSector);
   const inSector=new Set(list);
   const stride=S.nM+3;
-  const cur=new Map(),ref=new Map();
+  /* alem do periodo escolhido no topo, cada marca traz o YTD e a media mensal (YTD dividido
+     pelos meses fechados), na mesma conta usada no cabecalho do setor e na lista de bricks */
+  const pdY=periodDef('ytd');
+  const showY=S.period!=='ytd';
+  const cur=new Map(),ref=new Map(),curY=new Map(),refY=new Map();
   for(let i=0;i<S.nCombos;i++){
     const m=S.mArr[i];
     if(S.marcaOff.has(m))continue;
@@ -4296,16 +4454,39 @@ function renderModalMarcas(pd){
     else for(const ix of pd.refIdxs)r+=S.vArr[o+ix];
     cur.set(m,(cur.get(m)||0)+c);
     ref.set(m,(ref.get(m)||0)+r);
+    let cy=0;for(const ix of pdY.cur)cy+=S.vArr[o+ix];
+    curY.set(m,(curY.get(m)||0)+cy);
+    refY.set(m,(refY.get(m)||0)+S.vArr[o+S.nM+pdY.hist]);
   }
   const order=[...cur.keys()].sort((a,b)=>cur.get(b)-cur.get(a));
   if(!order.length){$('smBody').innerHTML='<div class="emptymsg">Sem vendas de marcas da linha neste setor.</div>';$('smFoot').innerHTML='';return;}
-  let html=`<table><thead><tr><th>Marca</th><th class="td-r" style="text-align:right">${esc(pd.lbl)}</th><th class="td-r" style="text-align:right">Evo</th></tr></thead><tbody>`;
+  const nm=Math.max(1,cache.nYtdM||pdY.cur.length||1);
+  const media=m=>(showY?curY.get(m):cur.get(m))/nm;
+  let tC=0,tR=0,tY=0,tYR=0;
+  let html=`<table><thead><tr><th>Marca</th>
+    <th class="td-r" style="text-align:right">${esc(pd.lbl)}</th>
+    <th class="td-r" style="text-align:right">Evo</th>
+    ${showY?`<th class="td-r" style="text-align:right">${esc(pdY.lbl)}</th>
+    <th class="td-r" style="text-align:right">Evo YTD</th>`:''}
+    <th class="td-r" style="text-align:right" title="${esc(pdY.lbl)} dividido pelos ${nm} meses fechados">Média mês</th>
+    </tr></thead><tbody>`;
   for(const m of order){
+    tC+=cur.get(m);tR+=ref.get(m);tY+=curY.get(m)||0;tYR+=refY.get(m)||0;
     html+=`<tr><td style="font-weight:600">${esc(S.marcas[m].name)}${S.marcaOv.has(m)?' <span class="badge bAlt">trocada</span>':''}</td>
       <td class="td-r num" style="text-align:right">${fmtBRL(cur.get(m))}</td>
-      <td class="td-r" style="text-align:right">${evoHtml(cur.get(m),ref.get(m))}</td></tr>`;
+      <td class="td-r" style="text-align:right">${evoHtml(cur.get(m),ref.get(m))}</td>
+      ${showY?`<td class="td-r num" style="text-align:right">${fmtBRL(curY.get(m)||0)}</td>
+      <td class="td-r" style="text-align:right">${evoHtml(curY.get(m)||0,refY.get(m)||0)}</td>`:''}
+      <td class="td-r num" style="text-align:right;color:var(--mut)">${fmtBRL(media(m))}</td></tr>`;
   }
-  $('smBody').innerHTML=html+'</tbody></table>';
+  html+=`</tbody><tfoot><tr style="font-weight:700;background:var(--panel2)">
+    <td>Total (${order.length} marca${order.length>1?'s':''})</td>
+    <td class="td-r num" style="text-align:right">${fmtBRL(tC)}</td>
+    <td class="td-r" style="text-align:right">${evoHtml(tC,tR)}</td>
+    ${showY?`<td class="td-r num" style="text-align:right">${fmtBRL(tY)}</td>
+    <td class="td-r" style="text-align:right">${evoHtml(tY,tYR)}</td>`:''}
+    <td class="td-r num" style="text-align:right">${fmtBRL((showY?tY:tC)/nm)}</td></tr></tfoot></table>`;
+  $('smBody').innerHTML=html;
   $('smFoot').innerHTML='';
 }
 function renderModalSaidas(lost,gain,pd){
