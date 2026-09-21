@@ -407,7 +407,7 @@ body.mapaFull #cenBar{display:none}
     <div class="upcard" id="cardBase">
       <div class="step">Arquivo 2</div>
       <h3>Base de vendas</h3>
-      <p>Planilha por brick e marca, com os meses de venda. Uma por regional, pode selecionar mais de uma.</p>
+      <p>Planilha por brick e marca, com os meses de venda. Aceita a base de vendas (com LINHA) e o MDTR completo (lê a aba PPP; a linha de cada setor vem da setorização do Arquivo 1). Uma por regional, pode selecionar mais de uma.</p>
       <div class="fname" id="fnBase"></div>
       <input type="file" id="fileBase" accept=".xlsx" hidden multiple>
     </div>
@@ -626,100 +626,192 @@ function colToIdx(letters){
   return n-1;
 }
 
+
+/* ---------- leitura parcial: so o comeco de uma aba, para reconhecer o cabecalho sem
+   descompactar centenas de MB ---------- */
+async function inflatePeek(comp,method,maxChars){
+  const dec=new TextDecoder();
+  if(method===0)return dec.decode(comp.subarray(0,Math.min(comp.length,maxChars)));
+  const ds=new DecompressionStream('deflate-raw');
+  const w=ds.writable.getWriter(),r=ds.readable.getReader();
+  let s='',stop=false;const CH=64*1024;
+  (async()=>{try{for(let i=0;i<comp.length&&!stop;i+=CH)await w.write(comp.subarray(i,i+CH));if(!stop)await w.close();}catch(e){}})();
+  try{
+    for(;;){const{done,value}=await r.read();if(done)break;s+=dec.decode(value,{stream:true});if(s.length>=maxChars)break;}
+  }finally{stop=true;try{await r.cancel();}catch(e){}}
+  return s;
+}
+let sst=[];
+const MESES=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+function serialParaMes(n){
+  const d=new Date(Date.UTC(1899,11,30)+Math.round(n)*86400000);
+  return MESES[d.getUTCMonth()]+'/'+String(d.getUTCFullYear()).slice(-2);
+}
+function textoCelula(attrs,inner){
+  if(inner==null)return '';
+  if(attrs.indexOf('t="s"')>=0){
+    const v=/<v>([^<]*)<\/v>/.exec(inner);
+    if(!v)return '';
+    const t=sst[+v[1]];
+    return t==null?'':String(t);
+  }
+  if(attrs.indexOf('t="inlineStr"')>=0||inner.indexOf('<is>')>=0){
+    let s='',t;const reT=/<t[^>]*>([\s\S]*?)<\/t>/g;
+    while((t=reT.exec(inner)))s+=t[1];
+    return decodeEnt(s);
+  }
+  const v=/<v>([^<]*)<\/v>/.exec(inner);
+  if(!v)return '';
+  const num=+v[1];
+  // serial de data entre 2015 e 2039: cabecalho numerico nesta faixa so pode ser mes
+  if(!Number.isNaN(num)&&num>=42000&&num<=51500)return serialParaMes(num);
+  return String(v[1]);
+}
+/* aceita jan/26, jan-26, jan.26, jan 26, janeiro/2026, 2026-01 e 01/2026, tudo
+   normalizado para o mesmo rotulo mmm/aa que o resto do simulador usa */
+function rotuloMes(h){
+  const t=String(h).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+  let m=/^([a-z]{3})[a-z]*\s*[\/\-. ]\s*(\d{2}|\d{4})$/.exec(t);
+  if(m){
+    const i=MESES.indexOf(m[1]);
+    if(i>=0)return MESES[i]+'/'+m[2].slice(-2);
+  }
+  m=/^(\d{4})[\/\-.](\d{1,2})$/.exec(t);
+  if(m&&+m[2]>=1&&+m[2]<=12)return MESES[+m[2]-1]+'/'+m[1].slice(-2);
+  m=/^(\d{1,2})[\/\-.](\d{4})$/.exec(t);
+  if(m&&+m[1]>=1&&+m[1]<=12)return MESES[+m[1]-1]+'/'+m[2].slice(-2);
+  return null;
+}
+const reCellHdr=/<c r="([A-Z]+)\d+"([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+function lerCabecalho(rowStr){
+  const h=[];let m;reCellHdr.lastIndex=0;
+  while((m=reCellHdr.exec(rowStr))){
+    const txt=textoCelula(m[2],m[3]).replace(/\u00a0/g,' ').trim();
+    if(txt)h[colToIdx(m[1])]=txt;
+  }
+  return h;
+}
+function normH(h){return String(h||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();}
+/* cabecalho de base de vendas: SETOR, BRICK e MARCA mais ao menos um mes. LINHA e opcional:
+   o MDTR nao traz, e a linha de cada setor sai da setorizacao (ver resolverLinhas) */
+function ehCabecalho(h){
+  const H=h.map(normH);
+  return H.indexOf('SETOR')>=0&&H.indexOf('BRICK')>=0&&H.indexOf('MARCA')>=0&&h.some(x=>x&&rotuloMes(x));
+}
+/* colunas que aparecem nas bases conhecidas (MDTR, dinamica, base de vendas) e que o
+   simulador nao usa de proposito: ficam de fora sem aviso */
+function colunaConhecida(H){
+  return H==='PDV'||/^COD\.? ?GD$/.test(H)||H==='TIPO ASSOCIADO'||/^EVO\b/.test(H)
+    ||H==='CNPJ'||H==='REGIONAL'||H==='DISTRITAL'||H==='UF';
+}
+/* ---------- escolha da aba ----------
+   Antes ia a maior aba do arquivo. No MDTR a maior e a dinamica (DIN. PPP), e a aba de
+   unidades (UN) tem o mesmo desenho da de valores: pelo tamanho, a leitura caia na aba
+   errada. Agora cada aba e reconhecida pelo cabecalho, e o nome desempata: dinamica perde,
+   unidade perde, PPP/VENDA ganha. */
+async function escolherAba(u8,entries){
+  const byName=new Map(entries.map(e=>[e.name,e]));
+  const ler=async n=>{const e=byName.get(n);return e?new TextDecoder().decode(await inflateAll(entryData(u8,e),e.method)):'';};
+  const wbx=await ler('xl/workbook.xml'),rels=await ler('xl/_rels/workbook.xml.rels');
+  const alvo=new Map();let m;
+  const reRel=/<Relationship\b[^>]*>/g;
+  while((m=reRel.exec(rels))){
+    const id=/\bId="([^"]+)"/.exec(m[0]),tg=/\bTarget="([^"]+)"/.exec(m[0]);
+    if(id&&tg)alvo.set(id[1],tg[1].charAt(0)==='/'?tg[1].slice(1):'xl/'+tg[1].replace(/^\.\//,''));
+  }
+  const abas=[];const reSh=/<sheet\b[^>]*>/g;
+  while((m=reSh.exec(wbx))){
+    const nm=/\bname="([^"]*)"/.exec(m[0]),id=/\s(?:\w+:)?id="([^"]+)"/.exec(m[0]);
+    if(!nm||!id)continue;
+    const path=alvo.get(id[1]);
+    if(path&&byName.has(path))abas.push({nome:decodeEnt(nm[1]),entry:byName.get(path),path});
+  }
+  if(!abas.length){
+    for(const e of entries)if(/^xl\/worksheets\/sheet\d+\.xml$/.test(e.name))abas.push({nome:e.name,entry:e,path:e.name});
+  }
+  const cands=[];
+  for(const a of abas){
+    const relp=a.path.replace(/([^\/]+)$/,'_rels/$1.rels');
+    const rx=byName.has(relp)?await ler(relp):'';
+    const dinamica=/pivotTable/i.test(rx);
+    const txt=await inflatePeek(entryData(u8,a.entry),a.entry.method,400000);
+    const rows=txt.split('</row>').slice(0,15);
+    let ok=false;
+    for(const r of rows){const i=r.lastIndexOf('<row');if(i<0)continue;if(ehCabecalho(lerCabecalho(r.slice(i)))){ok=true;break;}}
+    if(!ok)continue;
+    const N=normH(a.nome);
+    let sc=0;
+    if(dinamica||/^DIN\b|DINAMICA|PIVOT/.test(N))sc-=100;
+    if(/(^|[^A-Z])(UN|UND|UNID|UNIDADES?|QTD|QTDE|QUANTIDADE)([^A-Z]|$)/.test(N))sc-=50;
+    if(/PPP|VENDA|VALOR|R\$/.test(N))sc+=20;
+    cands.push({...a,sc,dinamica});
+  }
+  if(!cands.length)throw new Error('Nenhuma aba com as colunas SETOR, BRICK, MARCA e os meses de venda');
+  cands.sort((x,y)=>y.sc-x.sc||y.entry.usize-x.entry.usize);
+  return cands[0];
+}
+
 self.onmessage=async(ev)=>{
   try{
     const u8=new Uint8Array(ev.data.buffer);
     const entries=zipEntries(u8);
     const sstEntry=entries.find(e=>e.name==='xl/sharedStrings.xml');
-    const sheetCands=entries.filter(e=>/^xl\/worksheets\/sheet\d+\.xml$/.test(e.name));
-    if(!sheetCands.length)throw new Error('Nenhuma planilha encontrada no arquivo');
-    const sheetEntry=sheetCands.sort((a,b)=>b.usize-a.usize)[0];
     postMessage({type:'status',msg:'Lendo textos compartilhados...'});
-    const sst=sstEntry?parseSST(new TextDecoder().decode(await inflateAll(entryData(u8,sstEntry),sstEntry.method))):[];
-    postMessage({type:'status',msg:'Processando linhas...'});
+    sst=sstEntry?parseSST(new TextDecoder().decode(await inflateAll(entryData(u8,sstEntry),sstEntry.method))):[];
+    postMessage({type:'status',msg:'Procurando a aba de vendas...'});
+    const aba=await escolherAba(u8,entries);
+    const sheetEntry=aba.entry;
+    postMessage({type:'status',msg:'Processando linhas da aba '+aba.nome+'...'});
 
     const decoder=new TextDecoder();
     let buf='';
-    let header=null,colRole=null;
-    const months=[];const histNames={'TRI 25':0,'YTD 25':1,'MAT 25':2};
-    let nM=0;
+    let header=null,colRole=null,linhasAntes=0;
+    const months=[];
+    let nM=0,temLinha=false;
     const brickIds=new Map(),marcaIds=new Map(),setorIds=new Map();
     const bricks=[],marcas=[],setores=[];
     const agg=new Map();
+    // sem coluna LINHA: pesos setor x marca e brick x setor, para resolver a linha depois
+    const smW=new Map(),bsW=new Map();
     let rowCount=0;
     const reCell=/<c r="([A-Z]+)\d+"([^>]*)>(?:<v>([^<]*)<\/v>)?/g;
-    /* o cabecalho precisa de uma leitura propria: alem do texto compartilhado (t="s"), a
-       celula do mes pode vir como texto inline (<is><t>) ou como data de verdade (serial
-       numerico com formato de data). Nos dois ultimos casos a regex de valor nao pega nada,
-       a coluna do mes some sem aviso e o YTD fecha com um mes a menos. */
-    const reCellHdr=/<c r="([A-Z]+)\d+"([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
-    const MESES=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
-    function serialParaMes(n){
-      const d=new Date(Date.UTC(1899,11,30)+Math.round(n)*86400000);
-      return MESES[d.getUTCMonth()]+'/'+String(d.getUTCFullYear()).slice(-2);
-    }
-    function textoCelula(attrs,inner){
-      if(inner==null)return '';
-      if(attrs.indexOf('t="s"')>=0){
-        const v=/<v>([^<]*)<\/v>/.exec(inner);
-        if(!v)return '';
-        const t=sst[+v[1]];
-        return t==null?'':String(t);
+    const silenciosas=[];
+
+    function montarPapeis(h){
+      header=h;
+      const hist=[];   // {t:0|1|2, ano, idx}
+      colRole=header.map((x,idx)=>{
+        if(!x)return null;
+        const H=normH(x);
+        if(H==='LINHA'){temLinha=true;return{t:'k',k:0};}
+        if(H==='SETOR')return{t:'k',k:1};
+        if(H==='CIDADE')return{t:'k',k:2};
+        if(H==='BRICK')return{t:'k',k:3};
+        if(H==='MARCA')return{t:'k',k:4};
+        const hm=/^(TRI|YTD|MAT) (\d{2}|\d{4})$/.exec(H);
+        if(hm){hist.push({t:['TRI','YTD','MAT'].indexOf(hm[1]),ano:+hm[2].slice(-2),idx});return null;}
+        const mm=rotuloMes(x);
+        if(mm){months.push(mm);return{t:'m',i:months.length-1};}
+        if(colunaConhecida(H))silenciosas.push(idx);
+        return null;
+      });
+      /* TRI/YTD/MAT prontos servem so como ano anterior: o periodo atual sai dos meses.
+         Quando a base traz os dois anos (TRI 25 e TRI 26, como o MDTR), vale o mais antigo;
+         o mais novo fica de fora sem aviso */
+      for(let t=0;t<3;t++){
+        const c=hist.filter(x=>x.t===t).sort((a,b)=>a.ano-b.ano);
+        if(c.length)colRole[c[0].idx]={t:'h',i:t};
+        for(const x of c.slice(1))silenciosas.push(x.idx);
       }
-      if(attrs.indexOf('t="inlineStr"')>=0||inner.indexOf('<is>')>=0){
-        let s='',t;const reT=/<t[^>]*>([\s\S]*?)<\/t>/g;
-        while((t=reT.exec(inner)))s+=t[1];
-        return decodeEnt(s);
-      }
-      const v=/<v>([^<]*)<\/v>/.exec(inner);
-      if(!v)return '';
-      const num=+v[1];
-      // serial de data entre 2015 e 2039: cabecalho numerico nesta faixa so pode ser mes
-      if(!Number.isNaN(num)&&num>=42000&&num<=51500)return serialParaMes(num);
-      return String(v[1]);
-    }
-    /* aceita jan/26, jan-26, jan.26, jan 26, janeiro/2026, 2026-01 e 01/2026, tudo
-       normalizado para o mesmo rotulo mmm/aa que o resto do simulador usa */
-    function rotuloMes(h){
-      const t=String(h).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
-      let m=/^([a-z]{3})[a-z]*\s*[\/\-. ]\s*(\d{2}|\d{4})$/.exec(t);
-      if(m){
-        const i=MESES.indexOf(m[1]);
-        if(i>=0)return MESES[i]+'/'+m[2].slice(-2);
-      }
-      m=/^(\d{4})[\/\-.](\d{1,2})$/.exec(t);
-      if(m&&+m[2]>=1&&+m[2]<=12)return MESES[+m[2]-1]+'/'+m[1].slice(-2);
-      m=/^(\d{1,2})[\/\-.](\d{4})$/.exec(t);
-      if(m&&+m[1]>=1&&+m[1]<=12)return MESES[+m[1]-1]+'/'+m[2].slice(-2);
-      return null;
+      nM=months.length;
     }
 
     function parseRow(rowStr){
       reCell.lastIndex=0;let m;
       if(!header){
-        header=[];
-        reCellHdr.lastIndex=0;
-        while((m=reCellHdr.exec(rowStr))){
-          const txt=textoCelula(m[2],m[3]).trim();
-          if(txt)header[colToIdx(m[1])]=txt;
-        }
-        colRole=header.map(h=>{
-          if(!h)return null;
-          const H=h.toUpperCase();
-          if(H==='LINHA')return{t:'k',k:0};
-          if(H==='SETOR')return{t:'k',k:1};
-          if(H==='CIDADE')return{t:'k',k:2};
-          if(H==='BRICK')return{t:'k',k:3};
-          if(H==='MARCA')return{t:'k',k:4};
-          if(H in histNames)return{t:'h',i:histNames[H]};
-          const mm=rotuloMes(h);
-          if(mm){months.push(mm);return{t:'m',i:months.length-1};}
-          return null;
-        });
-        nM=months.length;
-        if(nM===0)throw new Error('Nenhuma coluna de mes reconhecida no cabecalho');
-        const need=['LINHA','SETOR','BRICK','MARCA'];
-        for(const n of need)if(!header.some(h=>h&&h.toUpperCase()===n))throw new Error('Coluna obrigatoria ausente: '+n);
+        const h=lerCabecalho(rowStr);
+        if(ehCabecalho(h)){montarPapeis(h);return;}
+        if(++linhasAntes>15)throw new Error('Cabeçalho da base de vendas não encontrado nas primeiras linhas da aba '+aba.nome);
         return;
       }
       let linha=null,setor=null,cidade=null,brick=null,marca=null,vals=null;
@@ -739,10 +831,13 @@ self.onmessage=async(ev)=>{
           }
         }
       }
-      if(!linha||!setor||!brick||!marca)return;
+      if(!setor||!brick||!marca)return;
+      if(temLinha&&!linha)return;
+      setor=String(setor).trim();brick=String(brick).trim();marca=String(marca).trim();
+      // linha de total de tabela dinamica
+      if(/^(TOTAL|\(VAZIO\)|\(BLANK\))/i.test(setor)||/^(TOTAL|\(VAZIO\)|\(BLANK\))/i.test(brick)||/^(TOTAL|\(VAZIO\)|\(BLANK\))/i.test(marca))return;
       rowCount++;
-      const linTrim=linha.trim();
-      const L=linTrim==='PRIME'?0:1;
+      const L=temLinha?(String(linha).trim().toUpperCase()==='PRIME'?0:1):-1;
       let sId=setorIds.get(setor);
       if(sId===undefined){
         sId=setores.length;setorIds.set(setor,sId);
@@ -755,11 +850,18 @@ self.onmessage=async(ev)=>{
         bricks.push({name:brick,city:(cidade||'').trim(),sP:-1,sI:-1});
       }
       const bi=bricks[bId];
-      if(L===0){if(bi.sP<0)bi.sP=sId;}else{if(bi.sI<0)bi.sI=sId;}
       let mId=marcaIds.get(marca);
       if(mId===undefined){
         mId=marcas.length;marcaIds.set(marca,mId);
         marcas.push({name:marca,linha:L});
+      }
+      if(temLinha){
+        if(L===0){if(bi.sP<0)bi.sP=sId;}else{if(bi.sI<0)bi.sI=sId;}
+      }else{
+        let w=1e-9;
+        if(vals)for(let i=0;i<nM;i++)w+=Math.abs(vals[i]);
+        const k1=sId*4096+mId;smW.set(k1,(smW.get(k1)||0)+w);
+        const k2=bId*65536+sId;bsW.set(k2,(bsW.get(k2)||0)+w);
       }
       if(!vals)return;
       const key=bId*4096+mId;
@@ -780,6 +882,8 @@ self.onmessage=async(ev)=>{
     },(pct)=>{
       if(pct-lastProg>0.02){lastProg=pct;postMessage({type:'progress',pct,rows:rowCount});}
     });
+    if(!header)throw new Error('Cabeçalho da base de vendas não encontrado na aba '+aba.nome);
+    if(nM===0)throw new Error('Nenhuma coluna de mes reconhecida no cabecalho');
 
     const n=agg.size;
     const bArr=new Int32Array(n),mArr=new Int16Array(n),vArr=new Float64Array(n*(nM+3));
@@ -789,12 +893,20 @@ self.onmessage=async(ev)=>{
       vArr.set(arr,i*(nM+3));
       i++;
     }
+    const pares=m=>{
+      const a=new Float64Array(m.size*2);let j=0;
+      for(const[k,w]of m){a[j++]=k;a[j++]=w;}
+      return a;
+    };
+    const smA=temLinha?new Float64Array(0):pares(smW);
+    const bsA=temLinha?new Float64Array(0):pares(bsW);
     /* coluna com cabecalho preenchido que nao virou nem chave, nem mes, nem historico:
        e o unico jeito de a perda de uma coluna de mes aparecer em vez de sumir calada */
-    const ignoradas=header.map((h,i)=>(h&&!colRole[i])?h:null).filter(Boolean);
+    const ignoradas=header.map((h,i)=>(h&&!colRole[i]&&silenciosas.indexOf(i)<0)?h:null).filter(Boolean);
     postMessage({type:'done',months,nM,bricks,marcas,setores,rowCount,ignoradas,
-      bArr:bArr.buffer,mArr:mArr.buffer,vArr:vArr.buffer},
-      [bArr.buffer,mArr.buffer,vArr.buffer]);
+      temLinha,aba:aba.nome,
+      bArr:bArr.buffer,mArr:mArr.buffer,vArr:vArr.buffer,smA:smA.buffer,bsA:bsA.buffer},
+      [bArr.buffer,mArr.buffer,vArr.buffer,smA.buffer,bsA.buffer]);
   }catch(err){
     postMessage({type:'error',msg:err.message||String(err)});
   }
@@ -854,9 +966,9 @@ function evoHtml(cur,ref,extra){
   const ttl=e.semBase?' title="Sem venda no período de comparação"':'';
   return `<span class="ev ${e.cls}"${ttl}>${e.txt}${extra&&!e.semBase?' '+extra:''}</span>`;
 }
-function toast(msg){
+function toast(msg,ms){
   const t=$('toast');t.textContent=msg;t.style.display='block';
-  clearTimeout(t._to);t._to=setTimeout(()=>t.style.display='none',2600);
+  clearTimeout(t._to);t._to=setTimeout(()=>t.style.display='none',ms||2600);
 }
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
@@ -903,19 +1015,44 @@ $('btnProcess').onclick=async()=>{
         ? 'Lendo base de vendas '+(k+1)+' de '+arquivos.length+': '+arquivos[k].name
         : 'Lendo base de vendas...');
       const buffer=await arquivos[k].arrayBuffer();
-      partes.push(await runWorker(buffer,k,arquivos.length));
+      const p=await runWorker(buffer,k,arquivos.length);
+      p.arquivo=arquivos[k].name;
+      partes.push(p);
     }
-    if(partes.length>1)setProg(97,'Juntando as '+partes.length+' bases...');
-    const base=fundirBases(partes);
+    // bases sem coluna LINHA (MDTR): a linha de cada setor vem da setorizacao e das outras bases
+    if(partes.some(p=>!p.temLinha)){
+      setProg(96,'Identificando a linha de cada setor...');
+      const cache=await idbLoad().catch(()=>null);
+      const sementes=sementesDeLinha(partes,cache);
+      for(const p of partes){
+        if(p.temLinha)continue;
+        let sem=sementes;
+        if(!casarSementes(p,sem).n){
+          setProg(96,'Base '+p.arquivo+' sem coluna LINHA: escolha a linha na tela');
+          sem=await sementesPorPergunta(p,perguntarLinhaDoGrupo);
+          setProg(96,'Identificando a linha de cada setor...');
+        }
+        p.avisoLinha=resolverLinhas(p,sem);
+      }
+    }
+    const dup=separarDuplicadas(partes);
+    const usadas=dup.usadas;
+    if(usadas.length>1)setProg(97,'Juntando as '+usadas.length+' bases...');
+    const base=fundirBases(usadas);
     aplicarBase(base);
     setProg(98,'Concluído: '+base.rowCount.toLocaleString('pt-BR')+' linhas, '
       +base.bricks.length+' bricks, '+base.marcas.length+' marcas, '+base.setores.length+' setores'
       +', '+base.nM+' mes'+(base.nM>1?'es':'')+' ('+base.months.join(', ')+')'
-      +(partes.length>1?', '+partes.length+' bases':''));
+      +(usadas.length>1?', '+usadas.length+' bases':''));
     const ign=[];
-    for(const p of partes)for(const h of(p.ignoradas||[]))if(ign.indexOf(h)<0)ign.push(h);
-    if(ign.length)setTimeout(()=>toast(ign.length+' coluna'+(ign.length>1?'s':'')
-      +' do cabeçalho não foi reconhecida e ficou de fora: '+ign.join(', ')),1400);
+    for(const p of usadas)for(const h of(p.ignoradas||[]))if(ign.indexOf(h)<0)ign.push(h);
+    const msgs=[];
+    for(const p of usadas)if(p.avisoLinha)msgs.push(p.avisoLinha);
+    for(const d of dup.descartadas)msgs.push('A base '+d.arquivo+' cobre os mesmos setores e meses de '+d.igual
+      +' e ficou de fora, para a venda não ser somada duas vezes.');
+    if(ign.length)msgs.push(ign.length+' coluna'+(ign.length>1?'s':'')
+      +' do cabeçalho não foi reconhecida e ficou de fora: '+ign.join(', '));
+    msgs.forEach((m,i)=>setTimeout(()=>toast(m,5000),1400+i*5200));
     setProg(99,'Salvando dados no navegador...');
     await idbSave().catch(()=>{});
     resetOverrides();
@@ -1451,7 +1588,8 @@ function runWorker(buffer,idx,total){
       }else if(d.type==='done'){
         w.terminate();URL.revokeObjectURL(url);
         resolve({months:d.months,nM:d.nM,bricks:d.bricks,marcas:d.marcas,setores:d.setores,
-          rowCount:d.rowCount,ignoradas:d.ignoradas||[],
+          rowCount:d.rowCount,ignoradas:d.ignoradas||[],temLinha:d.temLinha!==false,aba:d.aba||'',
+          smA:new Float64Array(d.smA||new ArrayBuffer(0)),bsA:new Float64Array(d.bsA||new ArrayBuffer(0)),
           bArr:new Int32Array(d.bArr),mArr:new Int16Array(d.mArr),vArr:new Float64Array(d.vArr)});
       }else if(d.type==='error'){
         w.terminate();URL.revokeObjectURL(url);
@@ -1463,6 +1601,210 @@ function runWorker(buffer,idx,total){
   });
 }
 
+/* ---------- linha de cada setor quando a base nao traz a coluna LINHA ----------
+   O MDTR vem por setor, brick, PDV e marca, sem LINHA. Cada setor so vende as marcas da
+   propria linha, entao basta saber a linha de alguns setores para descobrir a de todas as
+   marcas, e dai a dos setores restantes. A linha dos setores (sementes) vem, nesta ordem:
+   da setorizacao carregada no Arquivo 1 e das outras bases de vendas que trazem LINHA.
+   A linha das marcas nao e fixada por nome em lugar nenhum: sai do que o proprio arquivo
+   mostra, e trocar uma marca de linha continua sendo feito na tela Marcas por linha. */
+function primeiroNome(t){return normTxt(t).replace(/\s+/g,' ').split(' ')[0]||'';}
+function sementesDeLinha(partes,cache){
+  const porNum=new Map(),porNome=new Map();
+  const add=(num,nome,L,fonte)=>{
+    if(L!==0&&L!==1)return;
+    if(num&&!porNum.has(num))porNum.set(num,{L,nome:nome||'',fonte});
+    const k=normTxt(nome).replace(/\s+/g,' ');
+    if(k&&k!=='VAGO'&&!porNome.has(k))porNome.set(k,{L,fonte});
+  };
+  if(S.study&&!S.study.semLinha){
+    for(const t of(S.study.teams||[]))for(const s of t.sectors)add(s.num,s.nome,s.linha,'setorização');
+    for(const a of(S.study.brickAlloc||[]))add(a.novo,a.nome,a.L,'setorização');
+  }
+  for(const p of partes)if(p.temLinha)for(const s of p.setores)add(s.num,s.nome,s.linha,p.arquivo);
+  // por ultimo, a base processada que ficou guardada neste navegador da carga anterior
+  if(cache&&Array.isArray(cache.setores))for(const s of cache.setores)add(s.num,s.nome,s.linha,'#cache');
+  return{porNum,porNome};
+}
+function casarSementes(p,sem){
+  const nS=p.setores.length;
+  const sL=new Int8Array(nS).fill(-1),fixo=new Uint8Array(nS),fontes=new Map();
+  p.setores.forEach((s,i)=>{
+    let e=sem.porNum.get(s.num);
+    // mesmo numero, pessoa diferente: a numeracao mudou entre a base e a setorizacao
+    if(e&&e.nome&&primeiroNome(e.nome)&&primeiroNome(s.nome)&&primeiroNome(e.nome)!==primeiroNome(s.nome))e=null;
+    if(!e)e=sem.porNome.get(normTxt(s.nome).replace(/\s+/g,' '));
+    if(e){sL[i]=e.L;fixo[i]=1;fontes.set(e.fonte,(fontes.get(e.fonte)||0)+1);}
+  });
+  return{sL,fixo,fontes,n:fixo.reduce((a,b)=>a+b,0)};
+}
+function resolverLinhas(p,sem){
+  const nS=p.setores.length,nMc=p.marcas.length;
+  const{sL,fixo,fontes,n:nSem}=casarSementes(p,sem);
+  if(!nSem)throw new Error('A base '+p.arquivo+' não tem a coluna LINHA (formato MDTR). Para saber a linha de cada setor, '
+    +'carregue junto a setorização no Arquivo 1 (com a coluna LINHA) ou uma base de vendas que traga a coluna LINHA.');
+  const sm=p.smA,mL=new Int8Array(nMc).fill(-1);
+  for(let volta=0;volta<20;volta++){
+    let mudou=false;
+    // marca: linha dos setores que a vendem, pesada pelo valor
+    const vm=new Float64Array(nMc*2);
+    for(let j=0;j<sm.length;j+=2){
+      const k=sm[j],w=sm[j+1],s=Math.floor(k/4096),m=k%4096;
+      if(sL[s]>=0)vm[m*2+sL[s]]+=w;
+    }
+    for(let m=0;m<nMc;m++){
+      const a=vm[m*2],b=vm[m*2+1],L=a>b?0:(b>a?1:-1);
+      if(L>=0&&mL[m]!==L){mL[m]=L;mudou=true;}
+    }
+    // setor ainda sem linha: linha das marcas que ele vende
+    const vs=new Float64Array(nS*2);
+    for(let j=0;j<sm.length;j+=2){
+      const k=sm[j],w=sm[j+1],s=Math.floor(k/4096),m=k%4096;
+      if(!fixo[s]&&mL[m]>=0)vs[s*2+mL[m]]+=w;
+    }
+    for(let s=0;s<nS;s++){
+      if(fixo[s])continue;
+      const a=vs[s*2],b=vs[s*2+1],L=a>b?0:(b>a?1:-1);
+      if(L>=0&&sL[s]!==L){sL[s]=L;mudou=true;}
+    }
+    if(!mudou)break;
+  }
+  const semL=[];
+  p.setores.forEach((s,i)=>{if(sL[i]<0){semL.push(s.code);sL[i]=0;}s.linha=sL[i];});
+  let marcasSem=0;
+  p.marcas.forEach((m,i)=>{if(mL[i]<0){marcasSem++;mL[i]=0;}m.linha=mL[i];});
+  // dono do brick em cada linha: o setor daquela linha com mais venda no brick
+  const melhor=new Map();
+  const bs=p.bsA;
+  for(let j=0;j<bs.length;j+=2){
+    const k=bs[j],w=bs[j+1],b=Math.floor(k/65536),s=k%65536,L=sL[s];
+    const ch=b*2+L,at=melhor.get(ch);
+    if(!at||w>at.w)melhor.set(ch,{s,w});
+  }
+  for(const[ch,v]of melhor){
+    const b=Math.floor(ch/2),L=ch%2;
+    if(L===0)p.bricks[b].sP=v.s;else p.bricks[b].sI=v.s;
+  }
+  p.smA=p.bsA=null;
+  const nomeFonte=f=>f==='setorização'?' pela setorização':f==='#cache'?' pela base carregada da última vez neste navegador'
+    :f==='#tela'?' pela tua escolha na tela':' pela base '+f;
+  const de=[...fontes].map(([f,n])=>n+nomeFonte(f)).join(', ');
+  let msg='Base '+p.arquivo+' (aba '+p.aba+') sem coluna LINHA. Linha dos setores: '+de
+    +(nSem<nS?', '+(nS-nSem)+' pelas marcas que vendem':'')+', de '+nS+'. Linha das '+nMc
+    +' marcas pelo setor que vende cada uma.';
+  if(semL.length)msg+=' Sem linha identificada, entraram como PRIME: '+semL.join(', ')+'.';
+  if(marcasSem)msg+=' '+marcasSem+' marca'+(marcasSem>1?'s':'')+' sem linha identificada entrou como PRIME.';
+  return msg;
+}
+/* Sem setorizacao, sem base com LINHA e sem carga anterior no navegador, nao ha de onde
+   tirar a linha. Mas a estrutura do arquivo separa os setores em dois grupos sozinha: setores
+   que vendem as mesmas marcas sao da mesma linha, e setores que dividem o mesmo brick sao de
+   linhas diferentes. So falta dizer qual grupo e PRIME: isso e perguntado na tela, mostrando
+   as marcas de cada grupo. */
+function gruposDeSetores(p){
+  const nS=p.setores.length,pai=new Int32Array(nS).map((_,i)=>i);
+  const raiz=i=>{while(pai[i]!==i){pai[i]=pai[pai[i]];i=pai[i];}return i;};
+  const sm=p.smA,primeiro=new Map(),marcaW=new Map();
+  for(let j=0;j<sm.length;j+=2){
+    const k=sm[j],w=sm[j+1],s=Math.floor(k/4096),m=k%4096;
+    if(primeiro.has(m)){const a=raiz(s),b=raiz(primeiro.get(m));if(a!==b)pai[a]=b;}else primeiro.set(m,s);
+  }
+  const grupos=new Map();
+  for(let s=0;s<nS;s++){const r=raiz(s);if(!grupos.has(r))grupos.set(r,{setores:[],marcas:new Map(),valor:0});grupos.get(r).setores.push(s);}
+  for(let j=0;j<sm.length;j+=2){
+    const k=sm[j],w=sm[j+1],s=Math.floor(k/4096),m=k%4096,g=grupos.get(raiz(s));
+    g.marcas.set(m,(g.marcas.get(m)||0)+w);g.valor+=w;
+  }
+  const lista=[...grupos.values()].sort((a,b)=>b.valor-a.valor);
+  const gDe=new Int32Array(nS);lista.forEach((g,i)=>g.setores.forEach(s=>gDe[s]=i));
+  // grupos que dividem bricks: um de cada linha
+  const porBrick=new Map(),opostos=lista.map(()=>new Map());
+  const bs=p.bsA;
+  for(let j=0;j<bs.length;j+=2){
+    const k=bs[j],b=Math.floor(k/65536),s=k%65536;
+    if(!porBrick.has(b))porBrick.set(b,new Set());porBrick.get(b).add(gDe[s]);
+  }
+  for(const gs of porBrick.values())for(const a of gs)for(const b of gs)if(a!==b)opostos[a].set(b,(opostos[a].get(b)||0)+1);
+  return{lista,opostos};
+}
+function perguntarLinhaDoGrupo(arquivo,g,nGrupos){
+  return new Promise(res=>{
+    const top=[...g.marcas].sort((a,b)=>b[1]-a[1]).slice(0,12);
+    const nm=top.map(([m])=>esc(String(PERG_MARCAS[m]).replace(/\s*\(SP0\)\s*$/i,''))).join(', ');
+    const set=g.setores.slice(0,6).map(i=>esc(PERG_SETORES[i])).join('<br>');
+    const bg=document.createElement('div');
+    bg.className='modalBg open';bg.style.zIndex=300;
+    bg.innerHTML='<div class="modal" style="max-width:600px;margin-top:8vh"><div class="mhead"><div>'
+      +'<h2>Qual é a linha deste grupo?</h2><div class="meta">A base '+esc(arquivo)+' não tem a coluna LINHA e não há '
+      +'setorização carregada para dizer a linha de cada setor. Pelo arquivo, os setores se dividem em '+nGrupos
+      +' grupo'+(nGrupos>1?'s':'')+' que vendem marcas diferentes. Diga a linha deste e o resto sai sozinho.</div></div></div>'
+      +'<div class="mbody" style="padding:16px 22px 18px;font-size:13px;line-height:1.5">'
+      +'<div style="color:var(--mut2);font-size:11px;letter-spacing:.06em;text-transform:uppercase">Marcas que mais vendem</div>'
+      +'<div style="margin:4px 0 12px;font-weight:600">'+nm+'</div>'
+      +'<div style="color:var(--mut2);font-size:11px;letter-spacing:.06em;text-transform:uppercase">'+g.setores.length+' setores, por exemplo</div>'
+      +'<div style="margin:4px 0 18px">'+set+'</div>'
+      +'<div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn primary" data-l="0">PRIME</button>'
+      +'<button class="btn primary" data-l="1">INFINITY</button></div></div></div>';
+    document.body.appendChild(bg);
+    bg.querySelectorAll('button[data-l]').forEach(b=>b.onclick=()=>{bg.remove();res(+b.dataset.l);});
+  });
+}
+let PERG_MARCAS=[],PERG_SETORES=[];
+async function sementesPorPergunta(p,perguntar){
+  const{lista,opostos}=gruposDeSetores(p);
+  PERG_MARCAS=p.marcas.map(m=>m.name);PERG_SETORES=p.setores.map(s=>s.code);
+  const Lg=new Int8Array(lista.length).fill(-1);
+  for(;;){
+    let i=-1;for(let k=0;k<lista.length;k++)if(Lg[k]<0){i=k;break;}
+    if(i<0)break;
+    Lg[i]=await perguntar(p.arquivo,lista[i],lista.length);
+    // o que divide brick com um grupo ja resolvido e da outra linha
+    for(let volta=0;volta<lista.length;volta++){
+      let mudou=false;
+      for(let k=0;k<lista.length;k++){
+        if(Lg[k]>=0)continue;
+        const v=[0,0];
+        for(const[o,n]of opostos[k])if(Lg[o]>=0)v[1-Lg[o]]+=n;
+        if(v[0]!==v[1]){Lg[k]=v[0]>v[1]?0:1;mudou=true;}
+      }
+      if(!mudou)break;
+    }
+  }
+  const porNum=new Map(),porNome=new Map();
+  lista.forEach((g,k)=>g.setores.forEach(s=>{
+    const st=p.setores[s];
+    if(st.num&&!porNum.has(st.num))porNum.set(st.num,{L:Lg[k],nome:st.nome,fonte:'#tela'});
+    const kn=normTxt(st.nome).replace(/\s+/g,' ');if(kn&&!porNome.has(kn))porNome.set(kn,{L:Lg[k],fonte:'#tela'});
+  }));
+  return{porNum,porNome};
+}
+/* Duas bases da mesma carteira (a base de vendas e o MDTR da mesma regional, por exemplo)
+   somariam a venda duas vezes. Base cujos setores ja vieram quase todos em outra, com os
+   mesmos meses, e a mesma carteira: fica uma so. Vale a que traz mais meses; empatando, a
+   que tem a coluna LINHA, porque ali a linha das marcas foi definida de proposito. */
+function separarDuplicadas(partes){
+  const usadas=[],descartadas=[];
+  const chaves=p=>new Set(p.setores.map(s=>normTxt(s.code)));
+  const ordem=partes.map((p,i)=>i).sort((a,b)=>{
+    const pa=partes[a],pb=partes[b];
+    return(pb.nM-pa.nM)||((pb.temLinha?1:0)-(pa.temLinha?1:0))||(a-b);
+  });
+  for(const i of ordem){
+    const p=partes[i],ks=chaves(p);
+    let igual=null;
+    for(const u of usadas){
+      const ku=chaves(u);let comum=0;
+      for(const k of ks)if(ku.has(k))comum++;
+      const mesesComuns=p.months.filter(m=>u.months.indexOf(m)>=0).length;
+      if(ks.size&&comum/ks.size>=0.5&&mesesComuns>=Math.min(p.nM,u.nM)*0.5){igual=u;break;}
+    }
+    if(igual)descartadas.push({arquivo:p.arquivo,igual:igual.arquivo});
+    else usadas.push(p);
+  }
+  // devolve na ordem em que os arquivos foram escolhidos
+  usadas.sort((a,b)=>partes.indexOf(a)-partes.indexOf(b));
+  return{usadas,descartadas};
+}
 /* ---------- fusao de varias bases de vendas ----------
    Uma base por regional, todas no mesmo modelo. Cada arquivo chega do worker com a sua
    propria numeracao interna de bricks, marcas e setores, entao a fusao reindexa tudo:
