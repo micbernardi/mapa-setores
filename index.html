@@ -1333,15 +1333,26 @@ function parseBrickRows(rows,h,acc){
 /* Sem aba de numeracao, os setores saem do proprio campo Setor da aba de bricks: numero,
    nome e linha. O agrupamento usa as colunas Regional e Distrital quando existem e, quando
    nao existem, a numeracao: 601001 -> distrital 601000 -> regional 600000. */
+/* A chave do setor e o numero; so quando o mesmo numero aparece nas duas linhas com
+   pessoas diferentes (103104 PRIME de um e 103104 INFINITY de outro, por exemplo) sao
+   dois setores, um por linha, e ficam os dois, como consta na base de bricks. */
+function chaveSetorAlloc(porSetor,a){
+  const s=porSetor.get(a.novo);
+  if(!s)return a.novo;
+  if(s.linha>=0&&a.L>=0&&s.linha!==a.L&&primeiroNome(s.nome)&&primeiroNome(a.nome)
+    &&primeiroNome(s.nome)!==primeiroNome(a.nome))return a.novo+'|'+a.L;
+  return a.novo;
+}
 function teamsFromAlloc(alloc){
   const porSetor=new Map();
   for(const a of alloc){
     if(!a.novo)continue;
-    let s=porSetor.get(a.novo);
+    const ch=chaveSetorAlloc(porSetor,a);
+    let s=porSetor.get(ch);
     if(!s){
       s={num:a.novo,nome:a.nome||'',linha:a.L,espelho:'',antigo:'',sede:'',regional:'',
          dNum:0,dNome:'',rNum:0,rNome:''};
-      porSetor.set(a.novo,s);
+      porSetor.set(ch,s);
     }else{
       if(!s.nome&&a.nome)s.nome=a.nome;
       if(s.linha!==a.L)s.linha=-1;   // mesmo numero de setor aparecendo nas duas linhas
@@ -1399,7 +1410,15 @@ function montarEquipes(acc){
   for(const t of derivadas){
     const p=parseRotulo(t.name);
     if(p.nome&&!rotulo.has(t.num))rotulo.set(t.num,p.nome);
-    for(const s of t.sectors)if(!porNum.has(s.num)){porNum.set(s.num,s);novos++;}
+    for(const s of t.sectors){
+      const ex=porNum.get(s.num);
+      if(!ex){porNum.set(s.num,s);novos++;continue;}
+      // mesmo numero nas duas linhas com pessoas diferentes: os dois setores ficam
+      if(ex.linha>=0&&s.linha>=0&&ex.linha!==s.linha&&primeiroNome(ex.nome)&&primeiroNome(s.nome)
+        &&primeiroNome(ex.nome)!==primeiroNome(s.nome)&&!porNum.has(s.num+'|'+s.linha)){
+        porNum.set(s.num+'|'+s.linha,s);novos++;
+      }
+    }
   }
   acc.derivado=(acc.pvs.length===0&&novos>0);
   const byDist=new Map();
@@ -1893,12 +1912,21 @@ function applyBrickAlloc(){
   if(!alloc||!alloc.length||!S.bricks||!S.bricks.length)return 0;
   const nmKey=s=>normTxt(s).replace(/\s+/g,' ');
   const first=s=>nmKey(s).split(' ')[0]||'';
+  /* numero e nome apontam para listas: o mesmo numero pode estar nas duas linhas com
+     pessoas diferentes, e a mesma pessoa pode ter dois numeros */
   const byNum=new Map(),byName=new Map();
+  const addL=(m,k,i)=>{if(!m.has(k))m.set(k,[]);if(m.get(k).indexOf(i)<0)m.get(k).push(i);};
   S.setores.forEach((s,i)=>{
-    if(!byNum.has(s.num))byNum.set(s.num,i);
-    const k1=nmKey(s.nomeEstudo||'');if(k1&&k1!=='VAGO'&&!byName.has(k1))byName.set(k1,i);
-    const k2=nmKey(s.nome);if(k2&&k2!=='VAGO'&&!byName.has(k2))byName.set(k2,i);
+    addL(byNum,s.num,i);
+    const k1=nmKey(s.nomeEstudo||'');if(k1&&k1!=='VAGO')addL(byName,k1,i);
+    const k2=nmKey(s.nome);if(k2&&k2!=='VAGO')addL(byName,k2,i);
   });
+  const escolher=(lista,a,L)=>{
+    let c=lista.slice();
+    if(c.length>1){const cn=c.filter(i=>S.setores[i].num===a.novo);if(cn.length)c=cn;}
+    if(c.length>1){const cl=c.filter(i=>S.setores[i].linha===L);if(cl.length)c=cl;}
+    return c.length?c[0]:undefined;
+  };
   const byCode=new Map();
   S.bricks.forEach((b,i)=>{const m=String(b.name).match(/^\s*0*(\d+)/);if(m&&!byCode.has(m[1]))byCode.set(m[1],i);});
   // 0) brick que existe na base de bricks mas nao tem nenhuma venda na base de vendas
@@ -1925,12 +1953,11 @@ function applyBrickAlloc(){
     const L=a.L===0?0:1;
     const b=byCode.get(a.code);
     if(b===undefined)continue;
-    let t=byNum.get(a.novo);
-    if(t!==undefined&&a.nome){
-      const f1=first(a.nome),f2=first(S.setores[t].nomeEstudo||S.setores[t].nome);
-      if(f1&&f2&&f1!==f2)t=undefined; // numero coincidiu mas a pessoa e outra
-    }
-    if(t===undefined&&a.nome)t=byName.get(nmKey(a.nome));
+    // por numero, so onde a pessoa e a mesma (numero coincidir com outra pessoa nao vale)
+    const f1=first(a.nome||'');
+    let t=escolher((byNum.get(a.novo)||[]).filter(i=>{
+      const f2=first(S.setores[i].nomeEstudo||S.setores[i].nome);return !f1||!f2||f1===f2;}),a,L);
+    if(t===undefined&&a.nome)t=escolher(byName.get(nmKey(a.nome))||[],a,L);
     if(t===undefined){semSetor.add(a.novo+' - '+(a.nome||''));continue;}
     tgt[L].set(b,t);
   }
@@ -2003,8 +2030,9 @@ function reportBrickAlloc(){
 }
 /* ---------- teams display structure ---------- */
 function buildTeams(){
+  // o mesmo numero pode existir nas duas linhas (pessoas diferentes): lista, nao valor unico
   const byNum=new Map();
-  S.setores.forEach((s,i)=>byNum.set(s.num,i));
+  S.setores.forEach((s,i)=>{if(!byNum.has(s.num))byNum.set(s.num,[]);byNum.get(s.num).push(i);});
   // indice por nome: a base de vendas usa numeracao propria e os mesmos numeros apontam
   // para pessoas diferentes no estudo, entao o nome do vendedor e a chave confiavel
   const NMSTOP=new Set(['DE','DA','DO','DOS','DAS','E']);
@@ -2023,7 +2051,11 @@ function buildTeams(){
         let idx;
         const k=nmKey(st.nome);
         if(k&&k!=='VAGO'){
-          const c=(byName.get(k)||[]).filter(i=>!used.has(i));
+          let c=(byName.get(k)||[]).filter(i=>!used.has(i));
+          /* a mesma pessoa com dois setores na base (dois numeros): o numero do estudo
+             desempata, depois a linha */
+          if(c.length>1){const cn=c.filter(i=>S.setores[i].num===st.num);if(cn.length)c=cn;}
+          if(c.length>1&&st.linha>=0){const cl=c.filter(i=>S.setores[i].linha===st.linha);if(cl.length)c=cl;}
           if(c.length===1)idx=c[0];
           if(idx===undefined){
             const t1=nmToks(st.nome);
@@ -2045,12 +2077,14 @@ function buildTeams(){
           const stVago=!stFirst||stFirst==='VAGO';
           for(const key of[st.num,parseInt(st.antigo,10)]){
             if(!key)continue;
-            const ni=byNum.get(key);
-            if(ni===undefined||used.has(ni))continue;
-            const bFirst=nmToks(S.setores[ni].nome)[0]||'';
-            const bVago=!bFirst||bFirst==='VAGO';
-            if(!stVago&&!bVago&&stFirst!==bFirst)continue; // mesmo numero, pessoa diferente: nao roubar o setor
-            idx=ni;break;
+            for(const ni of(byNum.get(key)||[])){
+              if(used.has(ni))continue;
+              const bFirst=nmToks(S.setores[ni].nome)[0]||'';
+              const bVago=!bFirst||bFirst==='VAGO';
+              if(!stVago&&!bVago&&stFirst!==bFirst)continue; // mesmo numero, pessoa diferente: nao roubar o setor
+              idx=ni;break;
+            }
+            if(idx!==undefined)break;
           }
         }
         if(idx!==undefined){
@@ -2266,11 +2300,9 @@ function classificarSetores(){
       }
     }
     if(i===undefined)i=j;
-    if(i===undefined){
-      // so avisa quando a regional do item esta carregada; fora disso e ausencia esperada
-      if(x.num&&regsBase.has(regDe(x.num)))S.extAviso.push({num:x.num,nome:x.nome,base:null,outro:0});
-      continue;
-    }
+    /* item da lista que nao existe na base carregada: os bricks dele ja foram
+       redistribuidos no proprio arquivo, nao ha o que realocar e nao ha o que avisar */
+    if(i===undefined)continue;
     alvo.add(i);
   }
   const extNames=new Set(S.extStudy?S.extStudy.names:[]);
