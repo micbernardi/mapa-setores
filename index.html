@@ -1895,9 +1895,19 @@ function fundirBases(lista){
   }
   return{months,nM,bricks,marcas,setores,rowCount,bArr,mArr,vArr};
 }
+/* Familias de marcas que ficam sempre na linha INFINITY, independentemente de quem as
+   vende na base e de qualquer troca salva no navegador: a regra vem da regional. */
+const MARCAS_INFINITY_FIXAS=[/^\s*LANICO\b/i,/^\s*FILINAR\b/i];
+function marcaInfinityFixa(nome){return MARCAS_INFINITY_FIXAS.some(re=>re.test(String(nome||'')));}
+function fixarMarcasInfinity(marcas){
+  let n=0;
+  for(const m of marcas||[])if(marcaInfinityFixa(m.name)&&m.linha!==1){m.linha=1;n++;}
+  return n;
+}
 function aplicarBase(d){
   S.months=d.months;S.nM=d.nM;
   S.bricks=d.bricks;S.marcas=d.marcas;S.setores=d.setores;
+  fixarMarcasInfinity(S.marcas);
   S.bArr=d.bArr;S.mArr=d.mArr;S.vArr=d.vArr;
   S.nCombos=S.bArr.length;bcIdx=null;
 }
@@ -2757,7 +2767,7 @@ function periodDef(p){
   const cur=[];for(let i=Math.max(0,nM-12);i<nM;i++)cur.push(i);
   return{cur,refIdxs:[],hist:2,lbl:'MAT '+yy,refLbl:'vs MAT 25'};
 }
-function linhaOf(mId){return S.marcaOv.has(mId)?S.marcaOv.get(mId):S.marcas[mId].linha;}
+function linhaOf(mId){if(marcaInfinityFixa(S.marcas[mId].name))return 1;return S.marcaOv.has(mId)?S.marcaOv.get(mId):S.marcas[mId].linha;}
 function efLinha(sIdx){return S.linhaOv.has(sIdx)?S.linhaOv.get(sIdx):S.setores[sIdx].linha;}
 function sectorOf(bId,L){
   const k=bId+'|'+L;
@@ -3386,6 +3396,7 @@ function toggleMarcaOff(m){
   if(modalSector>=0)renderSectorModal();
 }
 function setMarcaLinha(m,L){
+  if(marcaInfinityFixa(S.marcas[m].name)&&L!==1){toast(S.marcas[m].name+' fica sempre em INFINITY (regra da regional).');return;}
   if(S.marcas[m].linha===L)S.marcaOv.delete(m);
   else S.marcaOv.set(m,L);
   renderAll();
